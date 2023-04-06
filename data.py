@@ -117,7 +117,8 @@ def load_datasets(parser, args):
                                          allowed_voices=args.voices,
                                          f0_from_mix=args.f0_cuesta,
                                          cunet_original=args.original_cu_net,
-                                         one_song=True)
+                                         one_song=True,
+                                         cuesta_model=args.cuesta_model)
 
             valid_dataset = BCBQDataSets(data_set='BC',
                                          validation_subset=True,
@@ -129,7 +130,8 @@ def load_datasets(parser, args):
                                          allowed_voices=args.voices,
                                          f0_from_mix=args.f0_cuesta,
                                          cunet_original=args.original_cu_net,
-                                         one_song=True)
+                                         one_song=True,
+                                         cuesta_model=args.cuesta_model)
         else:
             bc_train = BCBQDataSets(data_set='BC',
                                     validation_subset=False,
@@ -140,7 +142,8 @@ def load_datasets(parser, args):
                                     return_name=False,
                                     allowed_voices=args.voices,
                                     f0_from_mix=args.f0_cuesta,
-                                    cunet_original=args.original_cu_net)
+                                    cunet_original=args.original_cu_net,
+                                    cuesta_model=args.cuesta_model)
 
             bq_train = BCBQDataSets(data_set='BQ',
                                     validation_subset=False,
@@ -151,29 +154,32 @@ def load_datasets(parser, args):
                                     return_name=False,
                                     allowed_voices=args.voices,
                                     f0_from_mix=args.f0_cuesta,
-                                    cunet_original=args.original_cu_net)
+                                    cunet_original=args.original_cu_net,
+                                    cuesta_model=args.cuesta_model)
 
             bc_val = BCBQDataSets(data_set='BC',
-                                    validation_subset=True,
-                                    conf_threshold=args.confidence_threshold,
-                                    example_length=args.example_length,
-                                    n_sources=args.n_sources,
-                                    random_mixes=False,
-                                    return_name=False,
-                                    allowed_voices=args.voices,
-                                    f0_from_mix=args.f0_cuesta,
-                                  cunet_original=args.original_cu_net)
+                                  validation_subset=True,
+                                  conf_threshold=args.confidence_threshold,
+                                  example_length=args.example_length,
+                                  n_sources=args.n_sources,
+                                  random_mixes=False,
+                                  return_name=False,
+                                  allowed_voices=args.voices,
+                                  f0_from_mix=args.f0_cuesta,
+                                  cunet_original=args.original_cu_net,
+                                  cuesta_model=args.cuesta_model)
 
             bq_val = BCBQDataSets(data_set='BQ',
-                                    validation_subset=True,
-                                    conf_threshold=args.confidence_threshold,
-                                    example_length=args.example_length,
-                                    n_sources=args.n_sources,
-                                    random_mixes=False,
-                                    return_name=False,
-                                    allowed_voices=args.voices,
-                                    f0_from_mix=args.f0_cuesta,
-                                  cunet_original=args.original_cu_net)
+                                  validation_subset=True,
+                                  conf_threshold=args.confidence_threshold,
+                                  example_length=args.example_length,
+                                  n_sources=args.n_sources,
+                                  random_mixes=False,
+                                  return_name=False,
+                                  allowed_voices=args.voices,
+                                  f0_from_mix=args.f0_cuesta,
+                                  cunet_original=args.original_cu_net,
+                                  cuesta_model=args.cuesta_model)
 
             train_dataset = torch.utils.data.ConcatDataset([bc_train, bq_train])
             valid_dataset = torch.utils.data.ConcatDataset([bc_val, bq_val])
@@ -358,7 +364,7 @@ class CSD(torch.utils.data.Dataset):
 class BCBQDataSets(torch.utils.data.Dataset):
 
     def __init__(self, data_set='BC', validation_subset=False, conf_threshold=0.4, example_length=64000, allowed_voices='satb',
-                 return_name=False, n_sources=2, random_mixes=False, f0_from_mix=True, cunet_original=False, one_song=False):
+                 return_name=False, n_sources=2, random_mixes=False, f0_from_mix=True, cunet_original=False, one_song=False, cuesta_model=False):
 
         super().__init__()
 
@@ -373,6 +379,7 @@ class BCBQDataSets(torch.utils.data.Dataset):
         self.sample_rate = 16000
         self.cunet_original = cunet_original # if True, add 2 f0 values at start and end to match frame number in U-Net
         self.one_song = one_song
+        self.cuesta_model = cuesta_model
 
         assert n_sources <= len(allowed_voices), 'number of sources ({}) is higher than ' \
                                                  'allowed voiced to sample from ({})'.format(n_sources, len(allowed_voices))
@@ -523,17 +530,29 @@ class BCBQDataSets(torch.utils.data.Dataset):
 
         voices = ''.join(['satb'[x] for x in voice_indices])
 
+        if self.cuesta_model:
+            # load audio file and compute hcqt
+            pump = create_pump_object()
+            features = compute_pump_features_from_mix(pump, mix.numpy())
+            input_hcqt = features['dphase/mag'][0]
+            input_dphase = features['dphase/dphase'][0]
+            
+            # reshape hcqt and dphase to be compatible with the model
+            hcqt = input_hcqt.transpose(2, 1, 0)
+            dphase = input_dphase.transpose(2, 1, 0)
+        
         if self.return_name: return mix, frequencies, sources, name, voices
+        elif self.cuesta_model: return mix, frequencies, sources, hcqt, dphase
         else: return mix, frequencies, sources
 
 
 # -------- HCQT Computation -------------------------------------------------------------------------------------------
 def get_hcqt_params():
     bins_per_octave = 60
-    n_octaves = 5
+    n_octaves = 6
     over_sample = 5
     harmonics = [1, 2, 3, 4, 5]
-    sr = 16000
+    sr = 22050
     fmin = 32.7
     hop_length = 256
 
@@ -541,16 +560,17 @@ def get_hcqt_params():
 
 
 def get_freq_grid():
-    """Get the hcqt frequency grid"""
+    """Get the hcqt frequency grid
+    """
     (bins_per_octave, n_octaves, _, _, f_min, _, over_sample) = get_hcqt_params()
     freq_grid = librosa.cqt_frequencies(
-        n_octaves * 12 * over_sample, f_min, bins_per_octave=bins_per_octave
-    )
+        n_octaves * 12 * over_sample, f_min, bins_per_octave=bins_per_octave)
     return freq_grid
 
 
 def get_time_grid(n_time_frames):
-    """Get the hcqt time grid"""
+    """Get the hcqt time grid
+    """
     (_, _, _, sr, _, hop_length, _) = get_hcqt_params()
     time_grid = librosa.core.frames_to_time(
         range(n_time_frames), sr=sr, hop_length=hop_length
@@ -559,8 +579,9 @@ def get_time_grid(n_time_frames):
 
 
 def grid_to_bins(grid, start_bin_val, end_bin_val):
-    """Compute the bin numbers from a given grid"""
-    bin_centers = (grid[1:] + grid[:-1]) / 2.0
+    """Compute the bin numbers from a given grid
+    """
+    bin_centers = (grid[1:] + grid[:-1])/2.0
     bins = np.concatenate([[start_bin_val], bin_centers, [end_bin_val]])
     return bins
 
@@ -593,9 +614,47 @@ def create_pump_object():
 
 
 def compute_pump_features(pump, audio_fpath):
-    data = pump(audio_f=audio_fpath, sr=16000)
+    y, sr = librosa.load(audio_fpath, sr=22050, mono=True)
+    data = pump(y=y, sr=sr)
     return data
 
+
+def compute_pump_features_from_mix(pump, mix):
+    y = librosa.resample(mix, 16000, 22050)
+    data = pump(y=y, sr=22050)
+    return data
+
+
+def pitch_activations_to_mf0(pitch_activation_mat, thresh):
+    """Convert a pitch activation map to multif0 by thresholding peak values
+    at thresh
+    """
+    freqs = get_freq_grid()
+    times = get_time_grid(pitch_activation_mat.shape[1])
+
+    peak_thresh_mat = np.zeros(pitch_activation_mat.shape)
+    peaks = scipy.signal.argrelmax(pitch_activation_mat, axis=0)
+    peak_thresh_mat[peaks] = pitch_activation_mat[peaks]
+
+    idx = np.where(peak_thresh_mat >= thresh)
+
+    est_freqs = [[] for _ in range(len(times))]
+    for f, t in zip(idx[0], idx[1]):
+        est_freqs[t].append(freqs[f])
+
+    est_freqs = [np.array(lst) for lst in est_freqs]
+    return times, est_freqs
+
+
+def save_multif0_output(times, freqs, output_path):
+    """save multif0 output to a csv file
+    """
+    with open(output_path, 'w') as fhandle:
+        csv_writer = csv.writer(fhandle, delimiter='\t')
+        for t, f in zip(times, freqs):
+            row = [t]
+            row.extend(f)
+            csv_writer.writerow(row)
 
 def test_hcqt():
     audio_fpath = "/home/pierre/OneDrive/TELECOM/code/umss-pre/Datasets/ChoralSingingDataset/El_Rossinyol/audio_16kHz/rossinyol_Bajos_107.wav"
@@ -627,4 +686,6 @@ def test_hcqt():
         )
         plt.savefig(f"figures/hcqt_dphase_{i}.png")
 
-# test_hcqt()
+
+if __name__ == "__main__":
+    test_hcqt()

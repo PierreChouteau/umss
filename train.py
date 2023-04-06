@@ -35,11 +35,21 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         x = data[0]  # mix
         f0 = data[1]  # f0
         original_sources = data[2] # sources
-        x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device)
+        
+        if network.F0Extractor is not None:
+            hcqt = data[3]  # hcqt
+            dphase = data[4]  # dphase
+            x, f0, original_sources, hcqt, dphase = x.to(device), f0.to(device), original_sources.to(device), hcqt.to(device), dphase.to(device)
+        else:
+            x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device)
+        
         optimizer.zero_grad()
         
         if network.return_sources == True:
-            y_hat, sources = network(x, f0)
+            if network.F0Extractor is not None:
+                y_hat, sources = network(x, f0, hcqt, dphase)
+            else:
+                y_hat, sources = network(x, f0)
         else:
             y_hat = network(x, f0)
 
@@ -86,9 +96,6 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             writer.add_audio(f'train/original_sources/source_{n_sources}', original_sources[0,:,n_sources] / torch.max(torch.abs(original_sources[0,:,n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
             writer.add_audio(f'train/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
             writer.add_audio(f'train/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
-    else:
-        writer.add_audio('train/mix', x[0] / torch.max(torch.abs(x[0])), global_step=epoch-1, sample_rate=args.samplerate)
-        writer.add_audio('train/mix/reconstruct', y_hat[0] / torch.max(torch.abs(y_hat[0])), global_step=epoch-1, sample_rate=args.samplerate)
         
     return loss_container.avg
 
@@ -135,12 +142,8 @@ def valid(args, network, device, valid_sampler, epoch, writer):
             for n_sources in range(args.n_sources):
                 writer.add_audio(f'valid/original_sources/source_{n_sources}', original_sources[0,:,n_sources] / torch.max(torch.abs(original_sources[0,:,n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
                 writer.add_audio(f'valid/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
-                writer.add_audio(f'valid/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
-                
-        else:
-            writer.add_audio('valid/mix', x[0] / torch.max(torch.abs(x[0])), global_step=epoch-1, sample_rate=args.samplerate)
-            writer.add_audio('valid/mix/reconstruct', y_hat[0] / torch.max(torch.abs(y_hat[0])), global_step=epoch-1, sample_rate=args.samplerate)
-        
+                writer.add_audio(f'valid/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)    
+
         return loss_container.avg
 
 
@@ -221,6 +224,8 @@ def main():
                         help='if True, correlated sources are generated in parallel in synth. dataset')
     parser.add_argument('--one-song', action='store_true', default=False,
                         help='if True, only one song is used in BC dataset for training and validation')
+    parser.add_argument('--cuesta-model', action='store_true', default=False,
+                        help='if True, use cuesta model inside the network')
 
 
 
@@ -314,6 +319,7 @@ def main():
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     print("Using GPU:", use_cuda)
     #print("Using Torchaudio: ", utils._torchaudio_available())
+    print('Cuesta model:', args.cuesta_model)
     dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
 
     # create output dir if not exist
@@ -365,6 +371,10 @@ def main():
 
     model_class = model_utls.ModelLoader.get_model(args.architecture)
     model_to_train = model_class.from_config(train_params_dict)
+    
+    if args.cuesta_model:
+        model_to_train.F0Extractor = models.F0Extractor(trained_cuesta=True)
+        
     model_to_train.to(device)
 
     optimizer = torch.optim.Adam(
@@ -471,5 +481,102 @@ def main():
             break
 
 
+
+def bkld(y_pred, y_true):
+    
+    epsilon = 1e-7
+    y_true = torch.clamp(y_true, epsilon, 1.0 - epsilon)
+    y_pred = torch.clamp(y_pred, epsilon, 1.0 - epsilon)
+    
+    bce_loss = torch.nn.BCELoss(reduction='mean')
+    
+    return bce_loss(y_pred, y_true)
+
+
+
+def cuesta_train(model, train_loader, n_epoch, device):
+    """ Training loop for Cuesta model
+    
+    => MANQUE l'EARLY STOPPING pour être conforme à l'article
+
+    Args:
+        model (_type_): _description_
+        train_loader (_type_): _description_
+        n_epoch (_type_): _description_
+        device (_type_): _description_
+    """
+    
+    acc_mse = torch.nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    
+    for epoch in range(n_epoch):
+        
+        train_loss = 0.0
+        train_acc = 0.0
+        
+        for i, data in enumerate(train_loader, 0):
+            inputs, targets = data
+            inputs, targets = inputs.to(device), targets.to(device)
+            
+            print(inputs[:,1,:,:].is_cuda)
+            
+            optimizer.zero_grad()
+            
+            preds = model(inputs[:,0,:,:], inputs[:,1,:,:])
+            bce_loss = bkld(preds, targets)
+            acc = acc_mse(preds, targets)
+            
+            bce_loss.backward()
+            optimizer.step()
+            
+            train_loss += bce_loss.item()
+            train_acc += acc.item()
+    
+        # calculating the average training and validation loss over epoch
+        epoch_loss = train_loss / len(train_loader)
+        
+        # printing average training and average validation losses
+        print("Epoch: {}".format(epoch+1))
+        print("Training loss: {:.4f}".format(epoch_loss))
+        print("Training accuracy: {:.4f}".format(train_acc / len(train_loader)))
+        
+        
+        
+
+def cuesta_unit_test():    
+    # create model
+    cuesta_model = models.F0Extractor(trained_cuesta=False)
+    
+    use_cuda = False
+    device = torch.device("cuda" if use_cuda else "cpu")
+    
+    audio_fpath = "/home/pchouteau/umss/umss/Datasets/BC/mixtures_2_sources/1_BC001_part1_ab.wav"
+    pump = data.create_pump_object()
+    features = data.compute_pump_features(pump, audio_fpath)
+
+    hcqt = features['dphase/mag'][0]
+    dphase = features['dphase/dphase'][0]
+    
+    hcqt = hcqt.transpose(2, 1, 0)[np.newaxis, :, :, :]
+    dphase = dphase.transpose(2, 1, 0)[np.newaxis, :, :, :]
+    
+    
+    inps = torch.stack((torch.from_numpy(hcqt[:, :, :, :50]), torch.from_numpy(dphase[:, :, :, :50])), dim=1)
+    print(inps.shape)
+    tgts = torch.rand(1, 360, 50, requires_grad=False)
+    
+    dataset = torch.utils.data.TensorDataset(inps, tgts)
+    train_loader = torch.utils.data.DataLoader(
+        dataset, batch_size=1, num_workers=0
+    )
+    
+    cuesta_train(cuesta_model, train_loader, 100, device)
+    
+
+
 if __name__ == "__main__":
     main()
+    
+
+    # import models 
+    # cuesta_unit_test()

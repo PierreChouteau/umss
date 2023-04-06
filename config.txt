@@ -1,10 +1,10 @@
 # ----- GENERAL PARAMETERS ---------------------------
 
-tag: unsupervised_2s_bc1song_mf0_1
-comment: 2 sources on BC 1 song, supervised.
+tag: test_cuesta_trained
+comment: Test de l'implémentation de Cuesta à l'intérieur du modèle de Kilian. En utilisant les poids de tf pour initialiser les poids de pytorch. Et en utilisant des méthodes "TS" pour passer de salience à f0.
 architecture: SourceFilterMixtureAutoencoder2
 
-# wst-model = selfsupervised_2sources_5
+wst-model = test_cuesta_trained
 # output
 
 
@@ -32,7 +32,7 @@ voices = satb  # satb
 # -------- TRAINING PARAMETERS -----------------------
 
 epochs = 8000
-batch-size = 16
+batch-size = 15
 lr = 0.0001
 patience = 200
 lr-decay-patience = 80
@@ -71,7 +71,7 @@ noise-filter-mags = 40        # for noise filter in source filter model
 # nb-filter-magnitudes = 65   # for noise filter in harmonics plus noise model
 
 encoder = MixEncoderSimple
-n-sources = 2  # this parameter also determines the number of sources drawn from 'voices' in CSD dataset
+n-sources = 4  # this parameter also determines the number of sources drawn from 'voices' in CSD dataset
 
 encoder-hidden-size = 256
 embedding-size = 128
@@ -91,3 +91,4 @@ f-ref-source-spec = 200
 # source-spectrum = flat
 
 return-sources = True
+cuesta-model = True

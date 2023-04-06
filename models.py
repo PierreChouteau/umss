@@ -11,12 +11,16 @@ import librosa as lb
 from scipy.ndimage import filters
 import numpy as np
 
+from preprocessing_multif0_cuesta_BCBQ import f0_assignement
+
+import data
+
 
 # -------- F0 extraction model based on Cuesta's model -------------------------------------------------------------------------------------------
 # Reproduce Cuesta's model3 - Late/Deep
 class Base_model(nn.Module):
     def __init__(self, in_channel):
-        super(Base_model).__init__()
+        super(Base_model, self).__init__()
 
         self.in_channel = in_channel
         self.k_filter = 32
@@ -24,94 +28,248 @@ class Base_model(nn.Module):
         self.k_height = 5
 
         self.net = nn.Sequential(
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.in_channel),
+            
             # conv1
             nn.Conv2d(
                 self.in_channel,
                 self.k_filter // 2,
                 (self.k_width, self.k_height),
-                padding="same",
+                padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.k_filter // 2),
+            
             # conv2
             nn.Conv2d(
                 self.k_filter // 2,
                 self.k_filter,
                 (self.k_width, self.k_height),
-                padding="same",
+                padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.k_filter),
+            
             # conv2
             nn.Conv2d(
                 self.k_filter,
                 self.k_filter,
                 (self.k_width, self.k_height),
-                padding="same",
+                padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.k_filter),
+            
             # conv2
             nn.Conv2d(
                 self.k_filter,
                 self.k_filter,
                 (self.k_width, self.k_height),
-                padding="same",
+                padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.k_filter),
+            
             # conv2
-            nn.Conv2d(self.k_filter, self.k_filter, (70, 3), padding="same"),
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.k_filter),
+            
             # conv2
-            nn.Conv2d(self.k_filter, self.k_filter, (70, 3), padding="same"),
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(self.k_filter),
         )
 
     def forward(self, input):
-        return self.net(input), input
+        return self.net(input)
 
 
 class F0Extractor(_Model):
-    def __init__(self):
-        super(F0Extractor).__init__()
+    def __init__(self, trained_cuesta=False, in_channel=5, k_filter=32, k_width=5, k_height=5):
+        super(F0Extractor, self).__init__()
 
-        self.input_channels = 5
-        self.base_model = Base_model(self.input_channels)
-
-        self.model = nn.Sequential(
+        self.trained_cuesta = trained_cuesta
+        
+        self.in_channel = in_channel
+        self.k_filter = k_filter
+        self.k_width = k_width
+        self.k_height = k_height
+        
+        self.base_model1 = nn.Sequential(
+            nn.BatchNorm2d(in_channel),
+            
+            # conv1
+            nn.Conv2d(
+                self.in_channel,
+                self.k_filter // 2,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter // 2),
+            
+            # conv2
+            nn.Conv2d(
+                self.k_filter // 2,
+                self.k_filter,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.Conv2d(
+                self.k_filter,
+                self.k_filter,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.Conv2d(
+                self.k_filter,
+                self.k_filter,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(k_filter),
+            
+            # conv2
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+        )
+        
+        self.base_model2 = nn.Sequential(
+            nn.BatchNorm2d(self.in_channel),
+            
+            # conv1
+            nn.Conv2d(
+                self.in_channel,
+                self.k_filter // 2,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter // 2),
+            
+            # conv2
+            nn.Conv2d(
+                self.k_filter // 2,
+                self.k_filter,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.Conv2d(
+                self.k_filter,
+                self.k_filter,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.Conv2d(
+                self.k_filter,
+                self.k_filter,
+                (self.k_width, self.k_height),
+                padding=2,
+            ),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+            
+            # conv2
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
+            nn.ReLU(),
+            nn.BatchNorm2d(self.k_filter),
+        )
+        
+        self.cuesta = nn.Sequential(
             # conv7 layer
-            nn.Conv2d(64, 64, (3, 3), padding="same"),
+            nn.Conv2d(64, 64, (3, 3), padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(64),
+            
             # conv8 layer
-            nn.Conv2d(64, 64, (3, 3), padding="same"),
+            nn.Conv2d(64, 64, (3, 3), padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(64),
+            
             # conv9 layer
-            nn.Conv2d(64, 8, (360, 1), padding="same"),
+            nn.ZeroPad2d((0, 0, (360-1)//2, (360-1) - (360-1)//2)),
+            nn.Conv2d(64, 8, kernel_size=(360, 1)),
             nn.ReLU(),
-            nn.BatchNorm2d(),
+            nn.BatchNorm2d(8),
+            
             # output layer
-            nn.Conv2d(8, 1, (1, 1), padding="same"),
+            nn.Conv2d(8, 1, (1, 1), padding=0),
             nn.Sigmoid(),
         )
-
+        
+        if self.trained_cuesta == True:
+            self.initialize_model(self.base_model1, './cuesta_weight/base_model1.npy')
+            self.initialize_model(self.base_model2, './cuesta_weight/base_model2.npy')
+            self.initialize_model(self.cuesta, './cuesta_weight/cuesta.npy')
+        
     @classmethod
     def from_config(cls, config: dict):
         return cls()
+    
+    def initialize_model(self, model, np_file):
+        
+        weights = np.load(np_file, allow_pickle=True)
+        
+        n_layer = 0
+        for i, layer in enumerate(model):
+            if isinstance(layer, nn.Conv2d):
+                layer.weight = torch.nn.Parameter(torch.from_numpy(weights[n_layer][0]).permute(3, 2, 0, 1))
+                layer.bias = torch.nn.Parameter(torch.from_numpy(weights[n_layer][1]))
+                n_layer += 1
+                
+            if isinstance(layer, nn.BatchNorm2d):
+                # in tf weight is gamma and bias is beta
+                layer.weight = torch.nn.Parameter(torch.from_numpy(weights[n_layer][0]))
+                layer.bias = torch.nn.Parameter(torch.from_numpy(weights[n_layer][1]))
+                layer.running_mean = torch.from_numpy(weights[n_layer][2])
+                layer.running_var = torch.from_numpy(weights[n_layer][3])
+                n_layer += 1
+                
 
     def forward(self, input1, input2):
-        y6a = self.base_model(input1)
-        y6b = self.base_model(input2)
-
+        
+        y6a = self.base_model1(input1)
+        y6b = self.base_model2(input2)
+        
         # concatenate features
-        y6c = torch.cat((y6a, y6b), dim=0)
-
-        y10 = self.model(y6c)
+        y6c = torch.cat((y6a, y6b), dim=1)
+                
+        y10 = self.cuesta(y6c)
         predictions = torch.squeeze(y10, dim=0)
 
         return predictions
@@ -141,7 +299,8 @@ class SourceFilterMixtureAutoencoder2(_Model):
                  decoder_output_size=512,
                  n_sources=2,
                  bidirectional=True,
-                 voiced_unvoiced_diff=True
+                 voiced_unvoiced_diff=True,
+                 F0Extractor=None,
                  ):
 
         super().__init__()
@@ -169,7 +328,10 @@ class SourceFilterMixtureAutoencoder2(_Model):
         self.estimate_noise_mag = estimate_noise_mag
         self.return_lsf = False
         self.voiced_unvoiced_diff = voiced_unvoiced_diff
-
+        self.n_sources = n_sources
+        self.audio_length = n_samples // 16000
+        self.F0Extractor = F0Extractor
+        
         # neural networks
         overlap = hop_size / fft_size
 
@@ -198,6 +360,9 @@ class SourceFilterMixtureAutoencoder2(_Model):
                                                              f_ref=f_ref,
                                                              estimate_voiced_noise_mag=estimate_noise_mag)
 
+        self.F0Assigner = nn.Sequential(
+            # TODO: add a layer to map the embedding to the right size
+        )
 
     @classmethod
     def from_config(cls, config: dict):
@@ -232,12 +397,46 @@ class SourceFilterMixtureAutoencoder2(_Model):
                    voiced_unvoiced_diff=voiced_unvoiced_diff,
                    return_sources=return_sources)
 
-
-    def forward(self, audio, f0_hz):
+    def forward(self, audio, f0_hz, hcqt=None, dphase=None):
         # audio [batch_size, n_samples]
-        # f0_hz [batch_size, n_freq_frames, n_sources]
-
-        z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size]
+        # f0_hz [batch_size, n_freq_frames, n_sources] : tensor qui stack des tensors
+        # hcqt [batch_size, n_bins, times]
+        
+        print('cuesta_out:', f0_hz)
+        
+        if hcqt is not None and dphase is not None:
+            
+            #---------------------------------- Premier Test - Cuesta ----------------------------------#
+            # Pas encore fonctionnel, probleme dans le process de l'assignement des fréquencecs
+            
+            # # extraction of salience map
+            salience_maps = self.F0Extractor(hcqt, dphase)
+           
+            # f0 estimation
+            for i, salience_map in enumerate(salience_maps):
+                est_times, est_freqs = data.pitch_activations_to_mf0(salience_map[0, :, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
+                
+                # est_times_test = torch.zeros((len(est_times), 1))
+                # rearrange output
+                for k, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
+                    if any(fqs <= 0):
+                        est_freqs[k] = np.array([f for f in fqs if f > 0])
+                    else:
+                        est_freqs[k] = np.array(fqs)
+                                        
+                # F0 assignment to each source
+                f0_assigned = f0_assignement(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources)
+                # print(f0_assigned)
+                f0_hz[i, :, :] = f0_assigned
+                                            
+            #---------------------------------- Deuxième Test - Cuesta ----------------------------------#
+            # Passage de salience map à assignement des fréquences grâce à un réseau de neurones (pas encore fonctionnel)
+            
+            # salience_maps = self.F0Extractor(hcqt, dphase)
+            # f0_hz = self.F0Assigner(salience_maps)
+            
+        print('cuesta_in:', f0_hz)
+        z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size], f0_hz, est un argument non utilisé dans l'encoder
 
         batch_size, n_frames, n_sources, embedding_size = z.shape
 
@@ -649,16 +848,55 @@ class BaselineUnet(_Model):
             return y_hat
 
 
-if __name__ == "__main__":
-    torch.random.manual_seed(0)
-    # model = SourceFilterMixtureAutoencoder2(harmonic_roll_off=-2, estimate_noise_mag=True, bidirectional=False)
-    # audio = torch.rand((16, 64000))
-    # f0 = torch.rand((16, 125, 2))
-    # out = model(audio, f0)
-    # print(out.shape)
+def cuesta_model_test():
+    
+    # load audio file and compute hcqt
+    pump = data.create_pump_object()
+    features = data.compute_pump_features(pump,'./Datasets/BC/mixtures_2_sources/1_BC001_part1_ab.wav')
+    input_hcqt = features['dphase/mag'][0]
+    input_dphase = features['dphase/dphase'][0]
+    
+    # reshape hcqt and dphase to be compatible with the model
+    input_hcqt = input_hcqt.transpose(2, 1, 0)[np.newaxis, :, :, :]
+    input_dphase = input_dphase.transpose(2, 1, 0)[np.newaxis, :, :, :]
 
-    model = BaselineUnet(n_fft=1024, n_hop=256, original=True)
-    mix = torch.rand((16, 64000))
-    info = torch.rand((16, 254, 1)) * 500
-    out = model((mix, info))
-    print(out.shape)
+    torch_input1 = torch.from_numpy(input_hcqt[:, :, :, 0:5000].astype('float32'))
+    torch_input2 = torch.from_numpy(input_dphase[:, :, :, 0:5000].astype('float32'))
+    
+    # create model
+    # base_model = Base_model(in_channel=5)
+    cuesta_model = F0Extractor(trained_cuesta=True)
+    
+    predicted_output = cuesta_model(torch_input1, torch_input2)
+    
+    est_times, est_freqs = data.pitch_activations_to_mf0(predicted_output[0, :, :].detach().numpy(), 0.50)
+
+    # rearrange output
+    for i, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
+        if any(fqs <= 0):
+            est_freqs[i] = np.array([f for f in fqs if f > 0])
+
+    output_path = './torch_output.csv'
+    data.save_multif0_output(est_times, est_freqs, output_path)
+    
+    
+    plt.imshow(predicted_output[0, :, :].detach().numpy(), aspect='auto', origin='lower')
+    plt.savefig('test.png')
+
+
+if __name__ == "__main__":
+    
+    # torch.random.manual_seed(0)
+    # # model = SourceFilterMixtureAutoencoder2(harmonic_roll_off=-2, estimate_noise_mag=True, bidirectional=False)
+    # # audio = torch.rand((16, 64000))
+    # # f0 = torch.rand((16, 125, 2))
+    # # out = model(audio, f0)
+    # # print(out.shape)
+
+    # model = BaselineUnet(n_fft=1024, n_hop=256, original=True)
+    # mix = torch.rand((16, 64000))
+    # info = torch.rand((16, 254, 1)) * 500
+    # out = model((mix, info))
+    # print(out.shape)
+    
+    cuesta_model_test()
