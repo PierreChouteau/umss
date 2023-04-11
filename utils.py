@@ -11,6 +11,8 @@ import ddsp.spectral_ops, ddsp.core
 import librosa
 import matplotlib.pyplot as plt
 
+import models
+
 def _sndfile_available():
     try:
         import soundfile
@@ -217,6 +219,10 @@ def load_model(tag, device='cpu', return_args=False):
     architecture = results['args']['architecture']
     model_class = model_utls.ModelLoader.get_model(architecture)
     trained_model = model_class.from_config(results['args'])
+    
+    if 'cuesta_model' in results['args']:
+        if results['args']['cuesta_model']:
+            trained_model.F0Extractor = models.F0Extractor(trained_cuesta=True)
 
     trained_model.load_state_dict(state)
     trained_model.eval()
