@@ -20,8 +20,12 @@ import utils
 import ddsp.core
 
 import librosa
+from librosa.util.utils import fix_length
+
 import pumpp
 import matplotlib.pyplot as plt
+
+from nnAudio import features
 
 
 def load_datasets(parser, args):
@@ -530,19 +534,20 @@ class BCBQDataSets(torch.utils.data.Dataset):
 
         voices = ''.join(['satb'[x] for x in voice_indices])
 
-        if self.cuesta_model:
-            # load audio file and compute hcqt
-            pump = create_pump_object()
-            features = compute_pump_features_from_mix(pump, mix.numpy())
-            input_hcqt = features['dphase/mag'][0]
-            input_dphase = features['dphase/dphase'][0]
+        # if self.cuesta_model:
+        #     # load audio file and compute hcqt
+        #     pump = create_pump_object()
+        #     features = compute_pump_features_from_mix(pump, mix.numpy())
+        #     input_hcqt = features['dphase/mag'][0]
+        #     input_dphase = features['dphase/dphase'][0]
             
-            # reshape hcqt and dphase to be compatible with the model
-            hcqt = input_hcqt.transpose(2, 1, 0)
-            dphase = input_dphase.transpose(2, 1, 0)
+        #     # reshape hcqt and dphase to be compatible with the model
+        #     hcqt = input_hcqt.transpose(2, 1, 0)
+        #     dphase = input_dphase.transpose(2, 1, 0)
         
         if self.return_name: return mix, frequencies, sources, name, voices
-        elif self.cuesta_model: return mix, frequencies, sources, hcqt, dphase
+        # elif self.cuesta_model: return mix, frequencies, sources, hcqt, dphase
+        elif self.cuesta_model: return mix, frequencies, sources
         else: return mix, frequencies, sources
 
 
@@ -586,6 +591,89 @@ def grid_to_bins(grid, start_bin_val, end_bin_val):
     return bins
 
 
+def hcqt_torch(audio):
+       
+    (
+        bins_per_octave,
+        n_octaves,
+        harmonics,
+        sr,
+        f_min,
+        hop_length,
+        over_sample,
+    ) = get_hcqt_params()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resample = torchaudio.transforms.Resample(16000, sr).to(device)
+    
+    resample = resample.to(device)
+    audio = audio.to(device)
+    
+    audio = resample(audio)
+    
+    # Voir la fonction HCQT de pump, pour comprendre le raisonement
+    ###
+    samples = int(audio.size(1))
+    time_to_frame = np.floor(samples // hop_length)
+    n_frames = int(time_to_frame)
+    ####
+    
+    mags = torch.empty((audio.size(0), len(harmonics), bins_per_octave*n_octaves, n_frames))
+    dphases = torch.empty((audio.size(0), len(harmonics), bins_per_octave*n_octaves, n_frames))
+        
+    for h in harmonics:
+        cqt_torch = features.cqt.CQT2010(sr=sr, 
+                                        hop_length=hop_length, 
+                                        fmin=f_min*h, 
+                                        fmax=None, 
+                                        n_bins=n_octaves * 12 * over_sample, 
+                                        bins_per_octave=bins_per_octave,
+                                        norm=True, 
+                                        basis_norm=1, 
+                                        window='hann', 
+                                        pad_mode='reflect',
+                                        trainable_STFT=False,
+                                        filter_scale=1, 
+                                        trainable_CQT=False,
+                                        output_format='Complex', 
+                                        earlydownsample=True, 
+                                        verbose=False).to(device)
+    
+        # perform CQT
+        audio_cqt = cqt_torch(audio)
+        
+        # partie imaginaire en 0, partie réelle en 1
+        audio_cqt = audio_cqt[:, :, :, 1] + 1j * audio_cqt[:, :, :, 0]
+        audio_cqt = fix_length(audio_cqt, n_frames)        
+        
+        # Transormation en magnitude et phase 
+        mag = torch.abs(audio_cqt)
+        mag = librosa.amplitude_to_db(mag.cpu(), ref=np.max)
+        mags[:, h-1, :, :] = torch.tensor(mag)
+        
+        audio_cqt = audio_cqt.cpu()
+        phase = torch.exp(1.0j * torch.angle(audio_cqt))
+        phase = torch.angle(phase)
+        
+        # Transormation de la phase
+        phase = np.transpose(phase, (0, 2, 1))
+        
+        dphase = np.empty(phase.shape, dtype='float32')
+        zero_idx = [slice(None)] * phase.ndim
+        zero_idx[1] = slice(1)
+        else_idx = [slice(None)] * phase.ndim
+        else_idx[1] = slice(1, None)
+        zero_idx = tuple(zero_idx)
+        else_idx = tuple(else_idx)
+        dphase[zero_idx] = phase[zero_idx]
+        dphase[else_idx] = np.diff(np.unwrap(phase, axis=1), axis=1)
+        dphase = np.transpose(dphase, (0, 2, 1))
+            
+        dphases[:, h-1, :, :] = torch.tensor(dphase)
+            
+    return mags, dphases
+
+
 def create_pump_object():
     (
         bins_per_octave,
@@ -614,8 +702,7 @@ def create_pump_object():
 
 
 def compute_pump_features(pump, audio_fpath):
-    y, sr = librosa.load(audio_fpath, sr=22050, mono=True)
-    data = pump(y=y, sr=sr)
+    data = pump(audio_fpath)
     return data
 
 
