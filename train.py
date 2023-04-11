@@ -37,9 +37,11 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         original_sources = data[2] # sources
         
         if network.F0Extractor is not None:
-            hcqt = data[3]  # hcqt
-            dphase = data[4]  # dphase
-            x, f0, original_sources, hcqt, dphase = x.to(device), f0.to(device), original_sources.to(device), hcqt.to(device), dphase.to(device)
+            # hcqt = data[3]  # hcqt
+            # dphase = data[4]  # dphase
+            # x, f0, original_sources, hcqt, dphase = x.to(device), f0.to(device), original_sources.to(device), hcqt.to(device), dphase.to(device)
+            
+            x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device)
         else:
             x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device)
         
@@ -47,7 +49,8 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         
         if network.return_sources == True:
             if network.F0Extractor is not None:
-                y_hat, sources = network(x, f0, hcqt, dphase)
+                # y_hat, sources = network(x, f0, hcqt, dphase)
+                y_hat, sources = network(x, f0)
             else:
                 y_hat, sources = network(x, f0)
         else:
@@ -109,10 +112,24 @@ def valid(args, network, device, valid_sampler, epoch, writer):
             x = data[0]  # audio
             f0 = data[1]  # f0
             original_sources = data[2] # sources
-            x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device) #, z.to(device)
+            
+            
+            if network.F0Extractor is not None:
+                # hcqt = data[3]  # hcqt
+                # dphase = data[4]  # dphase
+                # x, f0, original_sources, hcqt, dphase = x.to(device), f0.to(device), original_sources.to(device), hcqt.to(device), dphase.to(device)
+                
+                x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device)
+            else:
+                x, f0, original_sources = x.to(device), f0.to(device), original_sources.to(device) #, z.to(device)
+                
 
             if network.return_sources == True:
-                y_hat, sources = network(x, f0)
+                if network.F0Extractor is not None:
+                    # y_hat, sources = network(x, f0, hcqt, dphase)
+                    y_hat, sources = network(x, f0)
+                else:
+                    y_hat, sources = network(x, f0)
             else:
                 y_hat = network(x, f0)
 
@@ -291,6 +308,8 @@ def main():
     parser.add_argument('--unidirectional', action='store_true', default=False)
     parser.add_argument('--voiced-unvoiced-same-noise', action='store_true', default=False)
     parser.add_argument('--return-sources', action='store_true', default=False)
+    parser.add_argument('--cuesta-model-trainable', action='store_true', default=False,
+                        help='if True, cuesta model is trainable')
 
 
     parser.add_argument('--nb-workers', type=int, default=4,
@@ -374,6 +393,13 @@ def main():
     
     if args.cuesta_model:
         model_to_train.F0Extractor = models.F0Extractor(trained_cuesta=True)
+        
+        if args.cuesta_model_trainable:
+            model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
+        else:
+            model_to_train.F0Extractor = model_to_train.F0Extractor.eval()
+            
+        print('Cuesta_trainable:', model_to_train.cuesta_model_trainable)
         
     model_to_train.to(device)
 

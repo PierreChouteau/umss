@@ -1,10 +1,11 @@
 # ----- GENERAL PARAMETERS ---------------------------
 
-tag: test_cuesta_trained
-comment: Test de l'implémentation de Cuesta à l'intérieur du modèle de Kilian. En utilisant les poids de tf pour initialiser les poids de pytorch. Et en utilisant des méthodes "TS" pour passer de salience à f0.
+tag: 4s_CuestaInTrained_Fix_HCQT_Torch_bc1song
+comment: Test de l'implémentation de Cuesta à l'intérieur du modèle de Kilian (hcqt de torch). En utilisant les poids de tf pour initialiser les poids de pytorch. Et en utilisant des méthodes "TS" pour passer de salience à f0. On empeche également que le modèle de cuesta train.
+
 architecture: SourceFilterMixtureAutoencoder2
 
-wst-model = test_cuesta_trained
+# wst-model = test_cuesta_inweigth_nontrain
 # output
 
 
@@ -92,3 +93,4 @@ f-ref-source-spec = 200
 
 return-sources = True
 cuesta-model = True
+cuesta-model-trainable = False
