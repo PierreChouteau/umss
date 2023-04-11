@@ -88,9 +88,10 @@ class Base_model(nn.Module):
 
 
 class F0Extractor(_Model):
-    def __init__(self, trained_cuesta=False, in_channel=5, k_filter=32, k_width=5, k_height=5):
+    def __init__(self, audio_transform=spectral_ops.hcqt_torch, trained_cuesta=False, in_channel=5, k_filter=32, k_width=5, k_height=5):
         super(F0Extractor, self).__init__()
 
+        self.audio_transform = audio_transform
         self.trained_cuesta = trained_cuesta
         
         self.in_channel = in_channel
@@ -99,7 +100,7 @@ class F0Extractor(_Model):
         self.k_height = k_height
         
         self.base_model1 = nn.Sequential(
-            nn.BatchNorm2d(in_channel),
+            nn.BatchNorm2d(in_channel, eps=0.001, momentum=0.99),
             
             # conv1
             nn.Conv2d(
@@ -109,7 +110,7 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter // 2),
+            nn.BatchNorm2d(self.k_filter // 2, eps=0.001, momentum=0.99),
             
             # conv2
             nn.Conv2d(
@@ -119,7 +120,7 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.Conv2d(
@@ -129,7 +130,7 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.Conv2d(
@@ -139,23 +140,23 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(k_filter),
+            nn.BatchNorm2d(k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
             nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
             nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
         )
         
         self.base_model2 = nn.Sequential(
-            nn.BatchNorm2d(self.in_channel),
+            nn.BatchNorm2d(self.in_channel, eps=0.001, momentum=0.99),
             
             # conv1
             nn.Conv2d(
@@ -165,7 +166,7 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter // 2),
+            nn.BatchNorm2d(self.k_filter // 2, eps=0.001, momentum=0.99),
             
             # conv2
             nn.Conv2d(
@@ -175,7 +176,7 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.Conv2d(
@@ -185,7 +186,7 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.Conv2d(
@@ -195,37 +196,37 @@ class F0Extractor(_Model):
                 padding=2,
             ),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
             nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
             
             # conv2
             nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
             nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
             nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
+            nn.BatchNorm2d(self.k_filter, eps=0.001, momentum=0.99),
         )
         
         self.cuesta = nn.Sequential(
             # conv7 layer
             nn.Conv2d(64, 64, (3, 3), padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(64),
+            nn.BatchNorm2d(64, eps=0.001, momentum=0.99),
             
             # conv8 layer
             nn.Conv2d(64, 64, (3, 3), padding=1),
             nn.ReLU(),
-            nn.BatchNorm2d(64),
+            nn.BatchNorm2d(64, eps=0.001, momentum=0.99),
             
             # conv9 layer
             nn.ZeroPad2d((0, 0, (360-1)//2, (360-1) - (360-1)//2)),
             nn.Conv2d(64, 8, kernel_size=(360, 1)),
             nn.ReLU(),
-            nn.BatchNorm2d(8),
+            nn.BatchNorm2d(8, eps=0.001, momentum=0.99),
             
             # output layer
             nn.Conv2d(8, 1, (1, 1), padding=0),
@@ -261,10 +262,17 @@ class F0Extractor(_Model):
                 n_layer += 1
                 
 
-    def forward(self, input1, input2):
+    # def forward(self, mags, dphases):
+    def forward(self, x):
         
-        y6a = self.base_model1(input1)
-        y6b = self.base_model2(input2)
+        mags, dphases = self.audio_transform(x)
+        
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        mags = mags.to(device)
+        dphases = dphases.to(device)
+        
+        y6a = self.base_model1(mags)
+        y6b = self.base_model2(dphases)
         
         # concatenate features
         y6c = torch.cat((y6a, y6b), dim=1)
@@ -301,6 +309,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                  bidirectional=True,
                  voiced_unvoiced_diff=True,
                  F0Extractor=None,
+                 cuesta_model_trainable=False,
                  ):
 
         super().__init__()
@@ -331,6 +340,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
         self.n_sources = n_sources
         self.audio_length = n_samples // 16000
         self.F0Extractor = F0Extractor
+        self.cuesta_model_trainable = cuesta_model_trainable
         
         # neural networks
         overlap = hop_size / fft_size
@@ -397,24 +407,37 @@ class SourceFilterMixtureAutoencoder2(_Model):
                    voiced_unvoiced_diff=voiced_unvoiced_diff,
                    return_sources=return_sources)
 
-    def forward(self, audio, f0_hz, hcqt=None, dphase=None):
+    def forward(self, audio, f0_hz):
+    # def forward(self, audio, f0_hz, hcqt=None, dphase=None):
         # audio [batch_size, n_samples]
-        # f0_hz [batch_size, n_freq_frames, n_sources] : tensor qui stack des tensors
-        # hcqt [batch_size, n_bins, times]
+        # f0_hz [batch_size, n_freq_frames, n_sources] : tensor qui stack des tensors     
         
-        print('cuesta_out:', f0_hz)
-        
-        if hcqt is not None and dphase is not None:
+        if self.F0Extractor is not None:
+            # if hcqt is not None and dphase is not None:
+                
+            #---------------------------------- Premier Test - Cuesta ----------------------------------#            
+            # extraction of salience map
+            if self.cuesta_model_trainable:
+                # With Hcqt from Librosa
+                # salience_maps = self.F0Extractor.eval()(hcqt, dphase)
+                
+                # With Hcqt from Pytorch
+                salience_maps = self.F0Extractor(audio)
+            else: 
+                with torch.no_grad():
+                    # With Hcqt from Librosa
+                    # salience_maps = self.F0Extractor.eval()(hcqt, dphase)
+                    
+                    # With Hcqt from Pytorch
+                    salience_maps = self.F0Extractor.eval()(audio)
             
-            #---------------------------------- Premier Test - Cuesta ----------------------------------#
-            # Pas encore fonctionnel, probleme dans le process de l'assignement des fréquencecs
             
-            # # extraction of salience map
-            salience_maps = self.F0Extractor(hcqt, dphase)
-           
             # f0 estimation
             for i, salience_map in enumerate(salience_maps):
-                est_times, est_freqs = data.pitch_activations_to_mf0(salience_map[0, :, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
+                if len(salience_map.shape) == 2:
+                    est_times, est_freqs = data.pitch_activations_to_mf0(salience_map[:, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
+                else:
+                    est_times, est_freqs = data.pitch_activations_to_mf0(salience_map[0, :, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
                 
                 # est_times_test = torch.zeros((len(est_times), 1))
                 # rearrange output
@@ -435,7 +458,6 @@ class SourceFilterMixtureAutoencoder2(_Model):
             # salience_maps = self.F0Extractor(hcqt, dphase)
             # f0_hz = self.F0Assigner(salience_maps)
             
-        print('cuesta_in:', f0_hz)
         z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size], f0_hz, est un argument non utilisé dans l'encoder
 
         batch_size, n_frames, n_sources, embedding_size = z.shape
@@ -850,38 +872,77 @@ class BaselineUnet(_Model):
 
 def cuesta_model_test():
     
+    # -------------------------------- Librosa --------------------------------
+    
     # load audio file and compute hcqt
-    pump = data.create_pump_object()
-    features = data.compute_pump_features(pump,'./Datasets/BC/mixtures_2_sources/1_BC001_part1_ab.wav')
-    input_hcqt = features['dphase/mag'][0]
-    input_dphase = features['dphase/dphase'][0]
+    # pump = data.create_pump_object()
+    # features = data.compute_pump_features(pump,'/home/ids/chouteau/umss/Datasets/BC/mixtures_2_sources/1_BC001_part1_ab.wav')
+    # input_hcqt = features['dphase/mag'][0]
+    # input_dphase = features['dphase/dphase'][0]
     
-    # reshape hcqt and dphase to be compatible with the model
-    input_hcqt = input_hcqt.transpose(2, 1, 0)[np.newaxis, :, :, :]
-    input_dphase = input_dphase.transpose(2, 1, 0)[np.newaxis, :, :, :]
+    # # reshape hcqt and dphase to be compatible with the model
+    # input_hcqt = input_hcqt.transpose(2, 1, 0)[np.newaxis, :, :, :]
+    # input_dphase = input_dphase.transpose(2, 1, 0)[np.newaxis, :, :, :]
+    
+    # torch_input1 = torch.from_numpy(input_hcqt[:, :, :, 0:5000].astype('float32'))
+    # torch_input2 = torch.from_numpy(input_dphase[:, :, :, 0:5000].astype('float32'))
+    
+    # cuesta_model = F0Extractor(trained_cuesta=True)
+    # cuesta_model = cuesta_model.eval()
+    
+    # predicted_output = cuesta_model(torch_input1, torch_input2)
+    
+    # print(predicted_output.shape)
+    
+    # est_times, est_freqs = data.pitch_activations_to_mf0(predicted_output[0, :, :].detach().cpu().numpy(), 0.5)
 
-    torch_input1 = torch.from_numpy(input_hcqt[:, :, :, 0:5000].astype('float32'))
-    torch_input2 = torch.from_numpy(input_dphase[:, :, :, 0:5000].astype('float32'))
+    # # rearrange output
+    # for i, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
+    #     if any(fqs <= 0):
+    #         est_freqs[i] = np.array([f for f in fqs if f > 0])
+
+    # output_path = './librosa_hcqt_output.csv'
+    # data.save_multif0_output(est_times, est_freqs, output_path)
     
-    # create model
-    # base_model = Base_model(in_channel=5)
+    # plt.imshow(predicted_output[0, :, :].detach().cpu().numpy(), aspect='auto', origin='lower')
+    # plt.savefig('test_librosa_hcqt.png')
+    
+    
+    # -------------------------------- Torch --------------------------------
+    
+    # definition of the device
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
+    # load the model
     cuesta_model = F0Extractor(trained_cuesta=True)
+    cuesta_model = cuesta_model.eval()
+    cuesta_model = cuesta_model.to(device)
     
-    predicted_output = cuesta_model(torch_input1, torch_input2)
+    # define the resampler to 22050 Hz
+    resampler = torchaudio.transforms.Resample(44100, 16000)
+    resampler = resampler.to(device)
     
-    est_times, est_freqs = data.pitch_activations_to_mf0(predicted_output[0, :, :].detach().numpy(), 0.50)
-
+    # load audio file and resample it to 22050 Hz
+    audio, sr = torchaudio.load('/home/ids/chouteau/umss/Datasets/BC/mixtures_2_sources/1_BC001_part1_ab.wav')
+    audio = resampler(audio)
+    audio = audio.to(device)
+    print(audio.shape)
+    
+    predicted_output = cuesta_model(audio)
+    
+    est_times, est_freqs = data.pitch_activations_to_mf0(predicted_output[0, :, :].detach().cpu().numpy(), 0.5)
+    print(predicted_output.shape)
+    
     # rearrange output
     for i, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
         if any(fqs <= 0):
             est_freqs[i] = np.array([f for f in fqs if f > 0])
 
-    output_path = './torch_output.csv'
+    output_path = './torch_hcqt_output.csv'
     data.save_multif0_output(est_times, est_freqs, output_path)
     
-    
-    plt.imshow(predicted_output[0, :, :].detach().numpy(), aspect='auto', origin='lower')
-    plt.savefig('test.png')
+    plt.imshow(predicted_output[0, :, :].detach().cpu().numpy(), aspect='auto', origin='lower')
+    plt.savefig('test_torch_hcqt.png')
 
 
 if __name__ == "__main__":
@@ -899,4 +960,5 @@ if __name__ == "__main__":
     # out = model((mix, info))
     # print(out.shape)
     
+    import torchaudio
     cuesta_model_test()
