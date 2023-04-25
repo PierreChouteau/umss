@@ -12,7 +12,6 @@ import numpy as np
 import torch
 
 import ddsp.core
-import data
 
 
 def compute_frame_distance(frame_1, frame_2, assigned_frames=None, n=0, backward_pass=False):
@@ -66,12 +65,20 @@ def compute_frame_distance(frame_1, frame_2, assigned_frames=None, n=0, backward
 
 def f0_assignement(mf0, audio_length, n_sources):
     
-    f0_estimates = []
+    minimum = 10000.0
+    
+    # on ajout une ligne de 0 au début et à la fin pour s'assurer que l'algorithme fonctionne
+    f0_estimates = [[0.0 for i in range(n_sources)]]
+    # f0_estimates = []
     for f0 in mf0:
+        if len(f0) > 0 and min(f0) < minimum: minimum = min(f0)
         while len(f0) < n_sources: 
             f0 = np.append(f0, 0)
         f0_estimates.append(sorted(f0))
-    
+        
+    # deuxième ajout de fréquences
+    f0_estimates.append([0.0 for i in range(n_sources)])
+        
     labels = []
     for n, freqs in enumerate(f0_estimates):
         if len(freqs) > n_sources: labels.append('n_f0>n_s')
@@ -84,14 +91,14 @@ def f0_assignement(mf0, audio_length, n_sources):
     subsequence_end = []
     labels_that_require_decision = ['1+_zero', 'n_f0>n_s']
     for n, label in enumerate(labels):
-        if n == 0 and label in labels_that_require_decision:
-            subsequence_start.append((-1, 'all_zero'))
+        # if n == 0 and label in labels_that_require_decision:
+        #     subsequence_start.append((-1, 'all_zero'))
         if n < len(labels) - 1 and label not in labels_that_require_decision and labels[n+1] in labels_that_require_decision:
             subsequence_start.append((n, label))
         if n > 0 and label not in labels_that_require_decision and labels[n-1] in labels_that_require_decision:
             subsequence_end.append((n, label))
-        if n == len(labels) - 1 and label in labels_that_require_decision:
-            subsequence_end.append((n, label))
+        # if n == len(labels) - 1 and label in labels_that_require_decision:
+        #     subsequence_end.append((n, label))
     assert len(subsequence_start) == len(subsequence_end), 'these lists must have the same length'
 
     f0_assigned = np.zeros((len(f0_estimates), n_sources))
@@ -230,17 +237,29 @@ def f0_assignement(mf0, audio_length, n_sources):
             # one label is 'n_f0>n_s' and needs to be corrected before making a decision here
             pass
 
-
+    # on enlève les 0 en début et fin de f0_assigned (lié à l'astuce utilisé au démarrage)
+    f0_assigned = f0_assigned[1:-1, :]
+            
     # compute number of STFT frames for the song
     n_stft_frames = 16000 * audio_length // 256
 
     # resample and save as torch.Tensor
     f0_cuesta = torch.tensor(f0_assigned).transpose(0, 1)  # [n_sources, n_frames]
-    f0_cuesta = ddsp.core.resample(f0_cuesta, n_stft_frames)
-    f0_cuesta = f0_cuesta.transpose(0, 1)  # [n_frames, n_sources]
-    f0_cuesta = f0_cuesta.flip(dims=(1,))
+    f0_cuesta_old = ddsp.core.resample(f0_cuesta, n_stft_frames)
     
-    return f0_cuesta
+    # on met à 0 les f0s trop faibles, on va générer des fréquences non souhaitées
+    for j, freqs in enumerate(f0_cuesta_old):
+        for i, f in enumerate(freqs):
+            if f < minimum:
+                f0_cuesta_old[j][i] = 0.0  
+        
+    f0_cuesta_old = f0_cuesta_old.transpose(0, 1)  # [n_frames, n_sources]
+    f0_cuesta_old = f0_cuesta_old.flip(dims=(1,))
+        
+    f0_cuesta_new = f0_cuesta.transpose(0, 1)  # [n_frames, n_sources]
+    f0_cuesta_new = f0_cuesta_new.flip(dims=(1,))
+    
+    return f0_cuesta_old, f0_cuesta_new
 
 
 
