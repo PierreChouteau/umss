@@ -746,7 +746,6 @@ def mf0_assigned_to_salience_map(mf0_times, mf0_freqs):
     times = get_time_grid(mf0_times.shape[0])
 
     salience_map = np.zeros((len(freq_grid), len(times)))
-    print(np.max(salience_map), np.min(salience_map))
         
     for id_time, (time, freqs) in enumerate(zip(mf0_times, mf0_freqs)):
         for f in freqs:

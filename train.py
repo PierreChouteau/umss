@@ -511,7 +511,7 @@ def main():
         t.set_description("Training Epoch")
         end = time.time()
 
-        train_loss, energy_s0 = train(args, model_to_train, device, train_sampler, optimizer, ss_weights_dict, epoch, writer)
+        train_loss = train(args, model_to_train, device, train_sampler, optimizer, ss_weights_dict, epoch, writer)
 
         # calculate validation loss only if model is not optimized on one single example
         if args.one_example or args.one_batch or (args.dataset == 'synthetic'):
