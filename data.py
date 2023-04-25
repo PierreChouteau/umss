@@ -592,7 +592,10 @@ def grid_to_bins(grid, start_bin_val, end_bin_val):
 
 
 def hcqt_torch(audio):
-       
+    """
+        Compute the harmonic CQT of a given audio signal.
+        This function is a wrapper around the librosa implementation of the HCQT.
+    """
     (
         bins_per_octave,
         n_octaves,
@@ -730,7 +733,52 @@ def pitch_activations_to_mf0(pitch_activation_mat, thresh):
         est_freqs[t].append(freqs[f])
 
     est_freqs = [np.array(lst) for lst in est_freqs]
+    return times, est_freqs, peak_thresh_mat
+
+
+def mf0_assigned_to_salience_map(mf0_times, mf0_freqs):
+    """Assign a multif0 to a salience map by finding the nearest salience
+    bin to each frequency in the multif0
+    """
+    freq_grid = get_freq_grid()
+    freq_grid = np.array(freq_grid).astype(int)
+
+    times = get_time_grid(mf0_times.shape[0])
+
+    salience_map = np.zeros((len(freq_grid), len(times)))
+    print(np.max(salience_map), np.min(salience_map))
+        
+    for id_time, (time, freqs) in enumerate(zip(mf0_times, mf0_freqs)):
+        for f in freqs:
+            if f != 0:
+                id_freq = np.argwhere(freq_grid == int(f))
+                # salience_map[id_freq, id_time] = peak_thresh_mat[id_freq, id_time]
+                salience_map[id_freq, id_time] = 1 
+
+    return salience_map
+
+
+def pitch_activations_to_mf0_torch(pitch_activation_mat_torch, thresh):
+    """Convert a pitch activation map to multif0 by thresholding peak values
+    at thresh
+    """
+    freqs = get_freq_grid()
+    times = get_time_grid(pitch_activation_mat_torch.size(1))
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    peak_thresh_mat = torch.zeros(pitch_activation_mat_torch.size()).to(device)
+    peaks = scipy.signal.argrelmax(pitch_activation_mat_torch.detach().cpu().numpy())
+    peak_thresh_mat[peaks] = pitch_activation_mat_torch[peaks]
+
+    est_freqs = [torch.tensor([], requires_grad=True) for _ in range(len(times))]
+    for t in range(len(times)):
+        idx = torch.where(peak_thresh_mat[:, t] >= thresh)
+        freqs_t = freqs[idx[0]]
+        est_freqs[t] = freqs_t
+
     return times, est_freqs
+
 
 
 def save_multif0_output(times, freqs, output_path):

@@ -49,8 +49,24 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         
         if network.return_sources == True:
             if network.F0Extractor is not None:
-                # y_hat, sources = network(x, f0, hcqt, dphase)
-                y_hat, sources = network(x, f0)
+                # test to show that if we use F0extractor, there is no need for the frequency
+                f0 = torch.zeros_like(f0).to(device)
+                
+                if args.cuesta_model_trainable:
+                    y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
+                                        
+                    plt.imshow(salience_maps_reconstruct.detach().cpu()[0][0], aspect='auto', origin='lower')
+                    plt.colorbar()
+                    plt.savefig('test_fig/salience_map_reconstruct_train.png')
+                    plt.close()
+                    
+                    plt.imshow(salience_maps.detach().cpu()[0][0], aspect='auto', origin='lower')
+                    plt.colorbar()
+                    plt.savefig('test_fig/salience_map_train.png')
+                    plt.close()
+                else:
+                    # y_hat, sources = network(x, f0, hcqt, dphase)
+                    y_hat, sources = network(x, f0)
             else:
                 y_hat, sources = network(x, f0)
         else:
@@ -81,11 +97,19 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             y_hat, lsf = y_hat
             lsf_loss = lsf_loss_fn(lsf) * args.loss_lsf_weight
             loss -= lsf_loss
-
+        
+        if args.cuesta_model_trainable:
+            salience_loss = torch.nn.MSELoss() # Loss between salience_map, cuesta output and salience_map reconstruct, f0 assigned output           
+            loss_salience = salience_loss(salience_maps, salience_maps_reconstruct.to(device))
+            
+            loss += loss_salience
+            
+            writer.add_scalar("Training_cost/salience", loss_salience, epoch)
+    
         loss.backward()
         optimizer.step()
         loss_container.update(loss.item(), f0.size(0))       
-        
+    
     # log audio to tensorboard
     if network.return_sources == True:
         # [batch_size, n_sources, n_samples]
@@ -125,9 +149,27 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 
 
             if network.return_sources == True:
+                # test to show that if we use F0extractor, there is no need for the frequency
+                f0 = torch.zeros_like(f0).to(device)
+                
                 if network.F0Extractor is not None:
-                    # y_hat, sources = network(x, f0, hcqt, dphase)
-                    y_hat, sources = network(x, f0)
+                    if args.cuesta_model_trainable:
+                        y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
+                    
+                        plt.imshow(salience_maps.detach().cpu()[0][0], aspect='auto', origin='lower')
+                        plt.colorbar()
+                        plt.savefig('test_fig/salience_map_valid.png')
+                        plt.close()  
+                        
+                        plt.imshow(salience_maps_reconstruct.detach().cpu()[0][0], aspect='auto', origin='lower')
+                        plt.colorbar()
+                        plt.savefig('test_fig/salience_map_reconstruct_valid.png')
+                        plt.close()
+                        
+                    else:
+                        # y_hat, sources = network(x, f0, hcqt, dphase)
+                        y_hat, sources = network(x, f0)
+
                 else:
                     y_hat, sources = network(x, f0)
             else:
@@ -145,6 +187,15 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 y_hat = y_hat[1].reshape((batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
             loss = loss_fn(x, y_hat)
             loss_container.update(loss.item(), f0.size(0))
+        
+        
+        if args.cuesta_model_trainable:
+            loss_test = torch.nn.MSELoss()
+            loss_salience = loss_test(salience_maps, salience_maps_reconstruct.to(device))
+            loss += loss_salience
+            
+            writer.add_scalar("Validation_cost/salience", loss_salience, epoch)
+        
         
         # log audio to tensorboard
         if network.return_sources == True:
@@ -219,7 +270,7 @@ def get_statistics(args, dataset):
 def main():
 
     parser = configargparse.ArgParser()
-    parser.add('-c', '--my-config', required=True, is_config_file=True, help='config file path')
+    parser.add('-c', '--my-config', required=False, is_config_file=True, help='config file path', default='config.txt')
     #parser = argparse.ArgumentParser(description='Training')
 
     # experiment tag which will determine output folder in trained models, tensorboard name, etc.
@@ -392,10 +443,13 @@ def main():
     model_to_train = model_class.from_config(train_params_dict)
     
     if args.cuesta_model:
-        model_to_train.F0Extractor = models.F0Extractor(trained_cuesta=True)
+        # Si True, on utilise le modèle Cuesta entrainé
+        # Sinon, on utilise le modèle Cuesta non entrainé
+        model_to_train.F0Extractor = models.F0Extractor(trained_cuesta=True) # ATTENTION: Pour l'instant trained_cuesta est un paramètre en dur
         
         if args.cuesta_model_trainable:
             model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
+            model_to_train.F0Extractor = model_to_train.F0Extractor.train()
         else:
             model_to_train.F0Extractor = model_to_train.F0Extractor.eval()
             
@@ -420,8 +474,17 @@ def main():
             results = json.load(stream)
 
         target_model_path = Path(model_path, args.wst_model + ".pth")
+        checkpoint_path = Path(model_path, args.wst_model + ".chkpnt")
+        
+        # Load juste the weights of the model
         state_dict = torch.load(target_model_path, map_location=device)
-        model_to_train.load_state_dict(state_dict)
+        
+        # Load all the informations of the model - optimizer, scheduler, etc.
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        
+        model_to_train.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
 
         # train for another epochs_trained
         t = tqdm.trange(
@@ -448,7 +511,7 @@ def main():
         t.set_description("Training Epoch")
         end = time.time()
 
-        train_loss = train(args, model_to_train, device, train_sampler, optimizer, ss_weights_dict, epoch, writer)
+        train_loss, energy_s0 = train(args, model_to_train, device, train_sampler, optimizer, ss_weights_dict, epoch, writer)
 
         # calculate validation loss only if model is not optimized on one single example
         if args.one_example or args.one_batch or (args.dataset == 'synthetic'):
