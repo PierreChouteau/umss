@@ -24,7 +24,7 @@ torch.manual_seed(0)
 parser = argparse.ArgumentParser()
 parser.add_argument('--tag', type=str)
 parser.add_argument('--test-set', type=str, default='El Rossinyol', choices=['CSD'])
-parser.add_argument('--f0-from-mix', action='store_true', default=True)
+parser.add_argument('--f0-from-mix', action='store_true', default=False)
 parser.add_argument('--show-progress', action='store_true', default=False)
 args, _ = parser.parse_known_args()
 tag = args.tag
@@ -33,6 +33,7 @@ parser.add_argument('--eval-tag', type=str, default=tag)
 args, _ = parser.parse_known_args()
 
 f0_cuesta = args.f0_from_mix
+print('f0-from-mix:', f0_cuesta)
 
 parser.add_argument('--compute', nargs='+', default=['all'], choices=['all','sp_SNR','sp_SI-SNR','mel_cep_dist',
                                                                 'SI-SDR_mask','sp_SNR_mask','sp_SI-SNR_mask','mel_cep_dist_mask'])
@@ -64,7 +65,10 @@ original_cunet = model_args['original_cu_net'] if 'original_cu_net' in model_arg
 
 # Initialize results and results_masking path
 if args.test_set == 'CSD': test_set_add_on = 'CSD'
-if args.f0_from_mix: f0_add_on = 'mf0'
+if args.f0_from_mix: 
+    f0_add_on = 'mf0'
+else:
+    f0_add_on = 'crepe'
 
 path_to_save_results = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag, f0_add_on, test_set_add_on, device)
 if not os.path.isdir(path_to_save_results):
@@ -138,6 +142,7 @@ for seed in range(n_seeds):
 
         mix = d[0].to(device)
         f0_hz = d[1].to(device)
+        # f0_hz = torch.zeros_like(d[1]).to(device)
         target_sources = d[2].to(device)
         name = d[3]
         voices = d[4]

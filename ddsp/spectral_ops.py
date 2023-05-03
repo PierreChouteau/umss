@@ -213,8 +213,11 @@ def grid_to_bins(grid, start_bin_val, end_bin_val):
     return bins
 
 
-def hcqt_torch(audio):
-       
+def hcqt_torch(audio, device):
+    """
+        Compute the harmonic CQT of a given audio signal.
+        This function is a wrapper around the librosa implementation of the HCQT.
+    """
     (
         bins_per_octave,
         n_octaves,
@@ -225,7 +228,7 @@ def hcqt_torch(audio):
         over_sample,
     ) = get_hcqt_params()
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     resample = torchaudio.transforms.Resample(16000, sr).to(device)
     
     resample = resample.to(device)
