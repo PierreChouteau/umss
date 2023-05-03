@@ -89,10 +89,11 @@ class Base_model(nn.Module):
 
 
 class F0Extractor(_Model):
-    def __init__(self, audio_transform=spectral_ops.hcqt_torch, trained_cuesta=False, in_channel=5, k_filter=32, k_width=5, k_height=5):
+    def __init__(self, audio_transform=spectral_ops.hcqt_torch, trained_cuesta=False, use_cuda=True, in_channel=5, k_filter=32, k_width=5, k_height=5):
         super(F0Extractor, self).__init__()
 
         self.audio_transform = audio_transform
+        self.use_cuda = use_cuda
         self.trained_cuesta = trained_cuesta
         
         self.in_channel = in_channel
@@ -266,9 +267,13 @@ class F0Extractor(_Model):
     # def forward(self, mags, dphases):
     def forward(self, x):
         
-        mags, dphases = self.audio_transform(x)
+        if self.use_cuda:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            device = 'cpu'
+            
+        mags, dphases = self.audio_transform(x, device)
         
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         mags = mags.to(device)
         dphases = dphases.to(device)
         
@@ -436,45 +441,48 @@ class SourceFilterMixtureAutoencoder2(_Model):
                     salience_maps = self.F0Extractor.eval()(audio)
             
             
-        # f0 estimation
-        salience_maps_reconstruct = torch.empty(salience_maps.shape)
-        for i, salience_map in enumerate(salience_maps):
-            if len(salience_map.shape) == 2:
-                est_times, est_freqs, peak_mat = data.pitch_activations_to_mf0(salience_map[:, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
-            else:
-                est_times, est_freqs, peak_mat = data.pitch_activations_to_mf0(salience_map[0, :, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
-            
-            # Equivalent to pitch_activations_to_mf0 but with torch
-            # if len(salience_map.shape) == 2:
-            #     est_times, est_freqs = data.pitch_activations_to_mf0_torch(salience_map[:, :], 0.5) # 0.5 is the threshold in cuesta's paper
-            # else:
-            #     est_times, est_freqs = data.pitch_activations_to_mf0_torch(salience_map[0, :, :], 0.5) # 0.5 is the threshold in cuesta's paper
-                            
-            # rearrange output
-            for k, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
-                if any(fqs <= 0):
-                    est_freqs[k] = np.array([f for f in fqs if f > 0])
-                    # est_freqs[k] = torch.tensor([f for f in fqs if f > 0])
+            # f0 estimation
+            salience_maps_reconstruct = torch.empty(salience_maps.shape)
+            for i, salience_map in enumerate(salience_maps):
+                if len(salience_map.shape) == 2:
+                    est_times, est_freqs, peak_mat = data.pitch_activations_to_mf0(salience_map[:, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
                 else:
-                    est_freqs[k] = np.array(fqs)
-                    # est_freqs[k] = torch.tensor(fqs)
+                    est_times, est_freqs, peak_mat = data.pitch_activations_to_mf0(salience_map[0, :, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
+                
+                # Equivalent to pitch_activations_to_mf0 but with torch
+                # if len(salience_map.shape) == 2:
+                #     est_times, est_freqs = data.pitch_activations_to_mf0_torch(salience_map[:, :], 0.5) # 0.5 is the threshold in cuesta's paper
+                # else:
+                #     est_times, est_freqs = data.pitch_activations_to_mf0_torch(salience_map[0, :, :], 0.5) # 0.5 is the threshold in cuesta's paper
+                                
+                # rearrange output
+                for k, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
+                    if any(fqs <= 0):
+                        est_freqs[k] = np.array([f for f in fqs if f > 0])
+                        # est_freqs[k] = torch.tensor([f for f in fqs if f > 0])
+                    else:
+                        est_freqs[k] = np.array(fqs)
+                        # est_freqs[k] = torch.tensor(fqs)
 
-            # F0 assignment to each source
-            f0_assigned_old, f0_assigned_new = f0_assignement(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources)
-            
-            if self.cuesta_model_trainable:
-                salience_maps_reconstruct[i, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
-            # f0_assigned = f0_assignement_torch(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources) # Equivalent to f0_assignement but with torch
-            # print(f0_assigned)
-            
-            f0_hz[i, :, :] = f0_assigned_old
+                # F0 assignment to each source
+                f0_assigned_old, f0_assigned_new = f0_assignement(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources)
+                
+                if self.cuesta_model_trainable:
+                    salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
+                    
+                salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
+                
+                # f0_assigned = f0_assignement_torch(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources) # Equivalent to f0_assignement but with torch
+                # print(f0_assigned)
+                
+                f0_hz[i, :, :] = f0_assigned_old
 
         
-        #---------------------------------- Deuxième Test - Cuesta ----------------------------------#
-        # Passage de salience map à assignement des fréquences grâce à un réseau de neurones (pas encore fonctionnel)
-        
-        # salience_maps = self.F0Extractor(hcqt, dphase)
-        # f0_hz = self.F0Assigner(salience_maps)
+            #---------------------------------- Deuxième Test - Cuesta ----------------------------------#
+            # Passage de salience map à assignement des fréquences grâce à un réseau de neurones (pas encore fonctionnel)
+            
+            # salience_maps = self.F0Extractor(hcqt, dphase)
+            # f0_hz = self.F0Assigner(salience_maps)
 
         z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size], f0_hz, est un argument non utilisé dans l'encoder
 
@@ -548,7 +556,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                 if self.cuesta_model_trainable:
                     return mix, sources, salience_maps, salience_maps_reconstruct
                 else:
-                    return mix, sources
+                    return mix, sources, salience_maps, salience_maps_reconstruct
             else:
                 return mix, sources
         if self.return_lsf:

@@ -25,6 +25,7 @@ from librosa.util.utils import fix_length
 import pumpp
 import matplotlib.pyplot as plt
 
+import models
 from nnAudio import features
 
 
@@ -122,7 +123,8 @@ def load_datasets(parser, args):
                                          f0_from_mix=args.f0_cuesta,
                                          cunet_original=args.original_cu_net,
                                          one_song=True,
-                                         cuesta_model=args.cuesta_model)
+                                         cuesta_model=args.cuesta_model,
+                                         cuesta_model_trainable=args.cuesta_model_trainable)
 
             valid_dataset = BCBQDataSets(data_set='BC',
                                          validation_subset=True,
@@ -135,7 +137,8 @@ def load_datasets(parser, args):
                                          f0_from_mix=args.f0_cuesta,
                                          cunet_original=args.original_cu_net,
                                          one_song=True,
-                                         cuesta_model=args.cuesta_model)
+                                         cuesta_model=args.cuesta_model,
+                                         cuesta_model_trainable=args.cuesta_model_trainable)
         else:
             bc_train = BCBQDataSets(data_set='BC',
                                     validation_subset=False,
@@ -147,7 +150,8 @@ def load_datasets(parser, args):
                                     allowed_voices=args.voices,
                                     f0_from_mix=args.f0_cuesta,
                                     cunet_original=args.original_cu_net,
-                                    cuesta_model=args.cuesta_model)
+                                    cuesta_model=args.cuesta_model,
+                                    cuesta_model_trainable=args.cuesta_model_trainable)
 
             bq_train = BCBQDataSets(data_set='BQ',
                                     validation_subset=False,
@@ -159,7 +163,8 @@ def load_datasets(parser, args):
                                     allowed_voices=args.voices,
                                     f0_from_mix=args.f0_cuesta,
                                     cunet_original=args.original_cu_net,
-                                    cuesta_model=args.cuesta_model)
+                                    cuesta_model=args.cuesta_model,
+                                    cuesta_model_trainable=args.cuesta_model_trainable)
 
             bc_val = BCBQDataSets(data_set='BC',
                                   validation_subset=True,
@@ -171,7 +176,8 @@ def load_datasets(parser, args):
                                   allowed_voices=args.voices,
                                   f0_from_mix=args.f0_cuesta,
                                   cunet_original=args.original_cu_net,
-                                  cuesta_model=args.cuesta_model)
+                                  cuesta_model=args.cuesta_model,
+                                  cuesta_model_trainable=args.cuesta_model_trainable)
 
             bq_val = BCBQDataSets(data_set='BQ',
                                   validation_subset=True,
@@ -183,7 +189,8 @@ def load_datasets(parser, args):
                                   allowed_voices=args.voices,
                                   f0_from_mix=args.f0_cuesta,
                                   cunet_original=args.original_cu_net,
-                                  cuesta_model=args.cuesta_model)
+                                  cuesta_model=args.cuesta_model,
+                                  cuesta_model_trainable=args.cuesta_model_trainable)
 
             train_dataset = torch.utils.data.ConcatDataset([bc_train, bq_train])
             valid_dataset = torch.utils.data.ConcatDataset([bc_val, bq_val])
@@ -368,7 +375,7 @@ class CSD(torch.utils.data.Dataset):
 class BCBQDataSets(torch.utils.data.Dataset):
 
     def __init__(self, data_set='BC', validation_subset=False, conf_threshold=0.4, example_length=64000, allowed_voices='satb',
-                 return_name=False, n_sources=2, random_mixes=False, f0_from_mix=True, cunet_original=False, one_song=False, cuesta_model=False):
+                 return_name=False, n_sources=2, random_mixes=False, f0_from_mix=True, cunet_original=False, one_song=False, cuesta_model=False, cuesta_model_trainable=False):
 
         super().__init__()
 
@@ -384,6 +391,7 @@ class BCBQDataSets(torch.utils.data.Dataset):
         self.cunet_original = cunet_original # if True, add 2 f0 values at start and end to match frame number in U-Net
         self.one_song = one_song
         self.cuesta_model = cuesta_model
+        self.cuesta_model_trainable = cuesta_model_trainable
 
         assert n_sources <= len(allowed_voices), 'number of sources ({}) is higher than ' \
                                                  'allowed voiced to sample from ({})'.format(n_sources, len(allowed_voices))
@@ -545,9 +553,20 @@ class BCBQDataSets(torch.utils.data.Dataset):
         #     hcqt = input_hcqt.transpose(2, 1, 0)
         #     dphase = input_dphase.transpose(2, 1, 0)
         
+        if self.cuesta_model_trainable:
+            # load the model           
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            cuesta_model = models.F0Extractor(trained_cuesta=True, use_cuda=True)
+            cuesta_model = cuesta_model.eval()
+            cuesta_model = cuesta_model.to(device)
+            
+            salience_map = cuesta_model(mix[None, :])
+            energy_s0 = torch.sum(torch.square(salience_map))
+        
         if self.return_name: return mix, frequencies, sources, name, voices
         # elif self.cuesta_model: return mix, frequencies, sources, hcqt, dphase
-        elif self.cuesta_model: return mix, frequencies, sources
+        elif self.cuesta_model and not self.cuesta_model_trainable: return mix, frequencies, sources
+        elif self.cuesta_model and self.cuesta_model_trainable: return mix, frequencies, sources, energy_s0.detach().cpu()
         else: return mix, frequencies, sources
 
 
