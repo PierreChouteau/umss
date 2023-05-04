@@ -470,7 +470,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                 if self.cuesta_model_trainable:
                     salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
                     
-                salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
+                # salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
                 
                 # f0_assigned = f0_assignement_torch(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources) # Equivalent to f0_assignement but with torch
                 # print(f0_assigned)
@@ -556,7 +556,8 @@ class SourceFilterMixtureAutoencoder2(_Model):
                 if self.cuesta_model_trainable:
                     return mix, sources, salience_maps, salience_maps_reconstruct
                 else:
-                    return mix, sources, salience_maps, salience_maps_reconstruct
+                    return mix, sources
+                    # return mix, sources, salience_maps, salience_maps_reconstruct
             else:
                 return mix, sources
         if self.return_lsf:
