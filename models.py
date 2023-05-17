@@ -531,19 +531,19 @@ class SourceFilterMixtureAutoencoder2(_Model):
                 # Extraction des f0s
                 sop = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 0, :, :])
                 sop = sop - 0.23
-                sop = nn.Sigmoid()(50 * sop) # thres [0.23, 0.17, 0.15, 0.17]
+                sop = nn.Sigmoid()(1000 * sop) # thres [0.23, 0.17, 0.15, 0.17]
                 
                 alto = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 1, :, :])
                 alto = alto - 0.17
-                alto = nn.Sigmoid()(5 *alto) # thres [0.23, 0.17, 0.15, 0.17]
+                alto = nn.Sigmoid()(1000 *alto) # thres [0.23, 0.17, 0.15, 0.17]
                 
                 tenor = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 2, :, :])
                 tenor = tenor - 0.15
-                tenor = nn.Sigmoid()(5 * tenor ) # thres [0.23, 0.17, 0.15, 0.17]
+                tenor = nn.Sigmoid()(1000 * tenor ) # thres [0.23, 0.17, 0.15, 0.17]
                 
                 bass = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 3, :, :])
                 bass = bass - 0.17
-                bass = nn.Sigmoid()(50 * bass) # thres [0.23, 0.17, 0.15, 0.17]
+                bass = nn.Sigmoid()(1000 * bass) # thres [0.23, 0.17, 0.15, 0.17]
                                 
                 
                 # TODO: Changer le device

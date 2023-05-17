@@ -224,6 +224,8 @@ def load_model(tag, device='cpu', return_args=False):
         if results['args']['cuesta_model']:
             trained_model.F0Extractor = models.F0Extractor(trained_cuesta=False)
             trained_model.F0Assigner = models.Assigner(trained_VA=False)
+        if results['args']['cuesta_model_trainable']:
+            trained_model.cuesta_model_trainable = True
 
     trained_model.load_state_dict(state)
     trained_model.eval()
