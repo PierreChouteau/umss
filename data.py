@@ -90,7 +90,8 @@ def load_datasets(parser, args):
                             example_length=args.example_length,
                             allowed_voices=args.voices,
                             n_sources=args.n_sources,
-                            singer_nb=[2,3,4],
+                            # singer_nb=[2,3,4],
+                            singer_nb=[2],
                             random_mixes=True,
                             f0_from_mix=args.f0_cuesta)
 
@@ -99,7 +100,8 @@ def load_datasets(parser, args):
                             example_length=args.example_length,
                             allowed_voices=args.voices,
                             n_sources=args.n_sources,
-                            singer_nb=[2,3,4],
+                            # singer_nb=[2,3,4],
+                            singer_nb=[3],
                             random_mixes=False,
                             f0_from_mix=args.f0_cuesta)
 
@@ -553,20 +555,21 @@ class BCBQDataSets(torch.utils.data.Dataset):
         #     hcqt = input_hcqt.transpose(2, 1, 0)
         #     dphase = input_dphase.transpose(2, 1, 0)
         
-        if self.cuesta_model_trainable:
-            # load the model           
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            cuesta_model = models.F0Extractor(trained_cuesta=True, use_cuda=True)
-            cuesta_model = cuesta_model.eval()
-            cuesta_model = cuesta_model.to(device)
+        # if self.cuesta_model_trainable:
+        #     # load the model           
+        #     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        #     cuesta_model = models.F0Extractor(trained_cuesta=True, use_cuda=True)
+        #     cuesta_model = cuesta_model.eval()
+        #     cuesta_model = cuesta_model.to(device)
             
-            salience_map = cuesta_model(mix[None, :])
-            energy_s0 = torch.sum(torch.square(salience_map))
-        
+        #     salience_map = cuesta_model(mix[None, :])
+        #     energy_s0 = torch.sum(torch.square(salience_map))
+                        
         if self.return_name: return mix, frequencies, sources, name, voices
         # elif self.cuesta_model: return mix, frequencies, sources, hcqt, dphase
         elif self.cuesta_model and not self.cuesta_model_trainable: return mix, frequencies, sources
-        elif self.cuesta_model and self.cuesta_model_trainable: return mix, frequencies, sources, energy_s0.detach().cpu()
+        # elif self.cuesta_model and self.cuesta_model_trainable: return mix, frequencies, sources, energy_s0.detach().cpu()
+        elif self.cuesta_model_trainable: return mix, frequencies, sources
         else: return mix, frequencies, sources
 
 
@@ -838,6 +841,67 @@ def test_hcqt():
             cmap="inferno",
         )
         plt.savefig(f"figures/hcqt_dphase_{i}.png")
+
+
+#---------------- Assigner function ----------------#
+
+def pitch_activations_to_mf0_argmax(pitch_activation_mat, thresh):
+    """Convert pitch activation map to pitch by argmaxing
+    """
+    freqs = get_freq_grid()
+    times = get_time_grid(pitch_activation_mat.shape[1])
+
+    peak_thresh_mat = np.zeros(pitch_activation_mat.shape)
+    peaks = np.argmax(pitch_activation_mat, axis=0)
+    for i in range(peak_thresh_mat.shape[1]):
+        peak_thresh_mat[peaks[i], i] = pitch_activation_mat[peaks[i], i]
+
+    idx = np.where(peak_thresh_mat >= thresh)
+
+    est_freqs = np.zeros(pitch_activation_mat.shape[1])
+
+    for f, t in zip(idx[0], idx[1]):
+        if f == 0:
+            ## redundant because it has zeros already but making sure
+            est_freqs[t] = 0
+        else:
+            if np.array(f).size > 1:
+                idx_max = peak_thresh_mat[t, f].argmax()
+                est_freqs[t] = freqs[f[idx_max]]
+            else:
+                est_freqs[t] = freqs[f]
+
+    return times, est_freqs
+
+
+def predict_one_file_torch(est_saliences, thresholds=[0.23, 0.17, 0.15, 0.17]):
+    # construct the multi-pitch predictions
+    predictions = np.zeros([est_saliences.shape[0], est_saliences.shape[3], 5])
+    
+    for i in range(est_saliences.shape[0]):
+        timestamp, sop = pitch_activations_to_mf0_argmax(est_saliences[i,0], thresh=thresholds[0])
+        _, alt = pitch_activations_to_mf0_argmax(est_saliences[i, 1], thresh=thresholds[1])
+        _, ten = pitch_activations_to_mf0_argmax(est_saliences[i, 2], thresh=thresholds[2])
+        _, bas = pitch_activations_to_mf0_argmax(est_saliences[i, 3], thresh=thresholds[3])
+        
+        predictions[i, :, 0] = timestamp
+        predictions[i, :, 1] = sop
+        # predictions[i, :, 1] = np.where(predictions[i, : , 1] < 260, 0.0, predictions[i, : ,1])
+        # predictions[i, :, 1] = np.where(predictions[i, : , 1] > 1050, 0.0, predictions[i, : ,1])
+        
+        predictions[i, :, 2] = alt
+        # predictions[i, :, 2] = np.where(predictions[i, : , 2] < 190, 0.0, predictions[i, : ,2])
+        # predictions[i, :, 2] = np.where(predictions[i, : , 2] > 760, 0.0, predictions[i, : ,2])
+                
+        predictions[i, :, 3] = ten
+        # predictions[i, :, 3] = np.where(predictions[i, : , 3] < 130, 0.0, predictions[i, : ,3])
+        # predictions[i, :, 3] = np.where(predictions[i, : , 3] > 525, 0.0, predictions[i, : ,3])
+                
+        predictions[i, :, 4] = bas
+        # predictions[i, :, 4] = np.where(predictions[i, : , 4] < 80, 0.0, predictions[i, : ,4])
+        # predictions[i, :, 4] = np.where(predictions[i, : , 4] > 260, 0.0, predictions[i, : ,4])
+
+    return predictions
 
 
 if __name__ == "__main__":

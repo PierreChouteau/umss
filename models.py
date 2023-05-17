@@ -12,82 +12,11 @@ from scipy.ndimage import filters
 import numpy as np
 
 from preprocessing_multif0_cuesta_BCBQ import f0_assignement
-from preprocessing_multif0_cuesta_BCBQ_torch import f0_assignement_torch
 
 import data
 
 
 # -------- F0 extraction model based on Cuesta's model -------------------------------------------------------------------------------------------
-# Reproduce Cuesta's model3 - Late/Deep
-class Base_model(nn.Module):
-    def __init__(self, in_channel):
-        super(Base_model, self).__init__()
-
-        self.in_channel = in_channel
-        self.k_filter = 32
-        self.k_width = 5
-        self.k_height = 5
-
-        self.net = nn.Sequential(
-            nn.BatchNorm2d(self.in_channel),
-            
-            # conv1
-            nn.Conv2d(
-                self.in_channel,
-                self.k_filter // 2,
-                (self.k_width, self.k_height),
-                padding=2,
-            ),
-            nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter // 2),
-            
-            # conv2
-            nn.Conv2d(
-                self.k_filter // 2,
-                self.k_filter,
-                (self.k_width, self.k_height),
-                padding=2,
-            ),
-            nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
-            
-            # conv2
-            nn.Conv2d(
-                self.k_filter,
-                self.k_filter,
-                (self.k_width, self.k_height),
-                padding=2,
-            ),
-            nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
-            
-            # conv2
-            nn.Conv2d(
-                self.k_filter,
-                self.k_filter,
-                (self.k_width, self.k_height),
-                padding=2,
-            ),
-            nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
-            
-            # conv2
-            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
-            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
-            nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
-            
-            # conv2
-            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
-            nn.Conv2d(self.k_filter, self.k_filter, (70, 3)),
-            nn.ReLU(),
-            nn.BatchNorm2d(self.k_filter),
-        )
-
-    def forward(self, input):
-        return self.net(input)
-
-
 class F0Extractor(_Model):
     def __init__(self, audio_transform=spectral_ops.hcqt_torch, trained_cuesta=False, use_cuda=True, in_channel=5, k_filter=32, k_width=5, k_height=5):
         super(F0Extractor, self).__init__()
@@ -236,9 +165,9 @@ class F0Extractor(_Model):
         )
         
         if self.trained_cuesta == True:
-            self.initialize_model(self.base_model1, './cuesta_weight/base_model1.npy')
-            self.initialize_model(self.base_model2, './cuesta_weight/base_model2.npy')
-            self.initialize_model(self.cuesta, './cuesta_weight/cuesta.npy')
+            self.initialize_model(self.base_model1, './cuesta_weights/base_model1.npy')
+            self.initialize_model(self.base_model2, './cuesta_weights/base_model2.npy')
+            self.initialize_model(self.cuesta, './cuesta_weights/cuesta.npy')
         
     @classmethod
     def from_config(cls, config: dict):
@@ -289,6 +218,164 @@ class F0Extractor(_Model):
         return predictions
 
 
+class Assigner(nn.Module):
+    def __init__(self, trained_VA=False):
+        super(Assigner, self).__init__()
+        
+        self.F0Assigner = nn.Sequential(
+            nn.BatchNorm2d(1, eps=0.001, momentum=0.99),
+            
+            # conv1
+            nn.Conv2d(1, 32, (3, 3), padding=1,),
+            nn.ReLU(),
+            nn.BatchNorm2d(32, eps=0.001, momentum=0.99),
+            
+            # conv2
+            nn.Conv2d(32, 32, (3, 3), padding=1,),
+            nn.ReLU(),
+            nn.BatchNorm2d(32, eps=0.001, momentum=0.99),
+            
+            # conv3
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(32, 16, (70, 3),),
+            nn.ReLU(),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.99),
+            
+            # conv4
+            nn.ZeroPad2d(((3-1)//2, (3-1) - (3-1)//2, (70-1)//2, (70-1) - (70-1)//2)),
+            nn.Conv2d(16, 16, (70, 3),),
+            nn.ReLU(),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.99),
+        )
+            
+            
+        self.branch1 = nn.Sequential(   
+            ## branch 1
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.99),
+            
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+        )
+        
+        self.branch2 = nn.Sequential(   
+            ## branch 2
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.99),
+            
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+        )
+        
+        self.branch3 = nn.Sequential(   
+            ## branch 3
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.99),
+            
+            nn.Conv2d(16,16,(3, 3),padding=1,),
+            nn.ReLU(),
+        )
+        
+        self.branch4 = nn.Sequential(   
+            ## branch 4
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+            nn.BatchNorm2d(16, eps=0.001, momentum=0.99),
+            
+            nn.Conv2d(16, 16, (3, 3), padding=1,),
+            nn.ReLU(),
+        )
+        
+        self.post_process1 = nn.Sequential(
+            nn.Conv2d(16, 1, 1, padding=0),
+            nn.Sigmoid(),
+        )
+        
+        self.post_process2 = nn.Sequential(
+            nn.Conv2d(16, 1, 1, padding=0),
+            nn.Sigmoid(),
+        )
+        
+        self.post_process3 = nn.Sequential(
+            nn.Conv2d(16, 1, 1, padding=0),
+            nn.Sigmoid(),
+        )
+        
+        self.post_process4 = nn.Sequential(
+            nn.Conv2d(16, 1, 1, padding=0),
+            nn.Sigmoid(),
+        )
+        
+        if trained_VA:
+            self.initialize_model(self.F0Assigner, "./assigner_weights/voas_cnn_f0_assigner.npy")
+            
+            self.initialize_model(self.branch1, "./assigner_weights/voas_cnn_branch1.npy")
+            self.initialize_model(self.branch2, "./assigner_weights/voas_cnn_branch2.npy")
+            self.initialize_model(self.branch3, "./assigner_weights/voas_cnn_branch3.npy") 
+            self.initialize_model(self.branch4, "./assigner_weights/voas_cnn_branch4.npy") 
+            
+            self.initialize_model(self.post_process1, "./assigner_weights/voas_cnn_postprocess1_weights.npy", "./assigner_weights/voas_cnn_postprocess1_bias.npy")
+            self.initialize_model(self.post_process2, "./assigner_weights/voas_cnn_postprocess2_weights.npy", "./assigner_weights/voas_cnn_postprocess2_bias.npy")
+            self.initialize_model(self.post_process3, "./assigner_weights/voas_cnn_postprocess3_weights.npy", "./assigner_weights/voas_cnn_postprocess3_bias.npy") 
+            self.initialize_model(self.post_process4, "./assigner_weights/voas_cnn_postprocess4_weights.npy", "./assigner_weights/voas_cnn_postprocess4_bias.npy")
+    
+        
+
+    def initialize_model(self, model, npy_file, npy_bias_file=None):
+        
+        weights = np.load(npy_file, allow_pickle=True)
+        
+        if npy_bias_file is None:
+            
+            n_layer = 0
+            for i, layer in enumerate(model):
+                if isinstance(layer, nn.Conv2d):
+                    layer.weight = torch.nn.Parameter(torch.from_numpy(weights[n_layer][0]).permute(3, 2, 0, 1))
+                    layer.bias = torch.nn.Parameter(torch.from_numpy(weights[n_layer][1]))
+                    n_layer += 1
+                    
+                if isinstance(layer, nn.BatchNorm2d):
+                    # in tf weight is gamma and bias is beta
+                    layer.weight = torch.nn.Parameter(torch.from_numpy(weights[n_layer][0]))
+                    layer.bias = torch.nn.Parameter(torch.from_numpy(weights[n_layer][1]))
+                    layer.running_mean = torch.from_numpy(weights[n_layer][2])
+                    layer.running_var = torch.from_numpy(weights[n_layer][3])
+                    n_layer += 1
+                    
+        else:
+            bias = np.load(npy_bias_file, allow_pickle=True)
+            n_layer = 0
+            for i, layer in enumerate(model):
+                if isinstance(layer, nn.Conv2d):
+                    layer.weight = torch.nn.Parameter(torch.from_numpy(weights[n_layer]).permute(3, 2, 0, 1))
+                    layer.bias = torch.nn.Parameter(torch.from_numpy(bias[n_layer]))
+                    n_layer += 1
+                   
+
+
+    def forward(self, x):
+        x = self.F0Assigner(x)
+        
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        x4 = self.branch4(x)
+        
+        y1 = self.post_process1(x1)
+        y2 = self.post_process2(x2)
+        y3 = self.post_process3(x3)
+        y4 = self.post_process4(x4)
+        
+        out = torch.cat((y1, y2, y3, y4), dim=1)
+        
+        return out
+
+
+
+
 # -------- Unsupervised Model for Source Separation ----------------------------------------------------------------------------------------------
 class SourceFilterMixtureAutoencoder2(_Model):
 
@@ -315,6 +402,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                  bidirectional=True,
                  voiced_unvoiced_diff=True,
                  F0Extractor=None,
+                 F0Assigner=None,
                  cuesta_model_trainable=False,
                  ):
 
@@ -346,6 +434,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
         self.n_sources = n_sources
         self.audio_length = n_samples // 16000
         self.F0Extractor = F0Extractor
+        self.F0Assigner = F0Assigner
         self.cuesta_model_trainable = cuesta_model_trainable
         
         # neural networks
@@ -375,10 +464,6 @@ class SourceFilterMixtureAutoencoder2(_Model):
                                                              hp_cutoff=500,
                                                              f_ref=f_ref,
                                                              estimate_voiced_noise_mag=estimate_noise_mag)
-
-        self.F0Assigner = nn.Sequential(
-            # TODO: add a layer to map the embedding to the right size
-        )
 
     @classmethod
     def from_config(cls, config: dict):
@@ -414,75 +499,104 @@ class SourceFilterMixtureAutoencoder2(_Model):
                    return_sources=return_sources)
 
     def forward(self, audio, f0_hz):
-    # def forward(self, audio, f0_hz, hcqt=None, dphase=None):
         # audio [batch_size, n_samples]
         # f0_hz [batch_size, n_freq_frames, n_sources] : tensor qui stack des tensors     
         
+        # torch.autograd.set_detect_anomaly(True)
         if self.F0Extractor is not None:
             # if hcqt is not None and dphase is not None:
                 
             #---------------------------------- Premier Test - Cuesta ----------------------------------#            
             # extraction of salience map
             if self.cuesta_model_trainable:
-                # With Hcqt from Librosa - need to adapt the code (train.py and model.py)
-                # salience_maps = self.F0Extractor(hcqt, dphase)
                 
-                # With Hcqt from Pytorch
-                salience_maps = self.F0Extractor(audio)
-                # print('self.F0Extractor.training', self.F0Extractor.base_model1.training)
-                # print(self.F0Extractor.base_model1[0].weight)
-                # print(self.F0Extractor.base_model2[0].weight)
+                with torch.no_grad():
+                    # With Hcqt from Pytorch - Extraction de salience map
+                    salience_maps = self.F0Extractor.train()(audio)
+                    
+                    # plt.imshow(salience_maps[0, 0].detach().cpu().numpy(), origin='lower', aspect='auto')
+                    # plt.colorbar()
+                    # plt.savefig('./test_fig/salience_map_torch.png')
+                    # plt.close()
+                    
+                # From Salience map to salience assignment
+                assign = self.F0Assigner.train()(salience_maps)
+                
+                # for i in range(4):
+                #     plt.imshow(assign[0, i].detach().cpu().numpy(), origin='lower', aspect='auto')
+                #     plt.colorbar()
+                #     plt.savefig('./test_fig/salience_map_{}_torch.png'.format(i))
+                #     plt.close()
+                
+                # Extraction des f0s
+                sop = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 0, :, :])
+                sop = sop - 0.23
+                sop = nn.Sigmoid()(50 * sop) # thres [0.23, 0.17, 0.15, 0.17]
+                
+                alto = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 1, :, :])
+                alto = alto - 0.17
+                alto = nn.Sigmoid()(5 *alto) # thres [0.23, 0.17, 0.15, 0.17]
+                
+                tenor = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 2, :, :])
+                tenor = tenor - 0.15
+                tenor = nn.Sigmoid()(5 * tenor ) # thres [0.23, 0.17, 0.15, 0.17]
+                
+                bass = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 3, :, :])
+                bass = bass - 0.17
+                bass = nn.Sigmoid()(50 * bass) # thres [0.23, 0.17, 0.15, 0.17]
+                                
+                
+                # TODO: Changer le device
+                device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+                
+                # Sert juste à extraire la valeurs des f0s
+                predict = data.predict_one_file_torch(assign.detach().cpu().numpy())
+                # predict = torch.from_numpy(predict).to(device)
+                
+                #--------------------------------------------------------------------------------------#
+                # print(predict.shape)
+                # for i, batch in enumerate(predict[:, :, 1]):
+                #     for j, val in enumerate(batch):
+                #         sop[i,0,j] = sop[i,0,j] * val
+                        
+                # for i, batch in enumerate(predict[:, :, 2]):
+                #     for j, val in enumerate(batch):
+                #         alto[i,0,j] = alto[i,0,j] * val
+                        
+                # for i, batch in enumerate(predict[:, :, 3]):
+                #     for j, val in enumerate(batch):
+                #         tenor[i,0,j] = tenor[i,0,j] * val
+                        
+                # for i, batch in enumerate(predict[:, :, 4]):
+                #     for j, val in enumerate(batch):
+                #         bass[i,0,j] = bass[i,0,j] * val
+                #--------------------------------------------------------------------------------------#
+                              
+                #--------------------------------------------------------------------------------------#
+                f0_sop = sop[:, 0, :] * torch.from_numpy(predict[:, :, 1]).to(device)
+                f0_alto = alto[:, 0, :] * torch.from_numpy(predict[:, :, 2]).to(device)
+                f0_tenor = tenor[:, 0, :] * torch.from_numpy(predict[:, :, 3]).to(device)
+                f0_bass = bass[:, 0, :] * torch.from_numpy(predict[:, :, 4]).to(device)
+                #--------------------------------------------------------------------------------------#
+                
+                
+                f0s = torch.stack((f0_sop, f0_alto, f0_tenor, f0_bass), dim=1) # [batch_size, n_sources, n_frames]
+                # f0s = torch.stack((sop[:, 0, :], alto[:, 0, :], tenor[:, 0, :], bass[:, 0, :]), dim=1) # [batch_size, n_sources, n_frames]
+                
+                # f0s = f0s - f0s.detach() + predict[:, :, 1:5].transpose(1, 2) 
+                
+                f0s = f0s.transpose(1, 2)  # [batch_size, n_frames, n_sources]
+                f0_hz = f0s
+                
+                # permet d'enlever les 0 qui font vriller le log derrière                
+                f0_hz = f0_hz.clamp(min=1e-5)
+                # print(f0_hz[:, 0, 0])
+                
             else: 
                 with torch.no_grad():
-                    # With Hcqt from Librosa
-                    # salience_maps = self.F0Extractor.eval()(hcqt, dphase)
-
                     # With Hcqt from Pytorch
                     salience_maps = self.F0Extractor.eval()(audio)
             
-            
-            # f0 estimation
-            salience_maps_reconstruct = torch.empty(salience_maps.shape)
-            for i, salience_map in enumerate(salience_maps):
-                if len(salience_map.shape) == 2:
-                    est_times, est_freqs, peak_mat = data.pitch_activations_to_mf0(salience_map[:, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
-                else:
-                    est_times, est_freqs, peak_mat = data.pitch_activations_to_mf0(salience_map[0, :, :].detach().cpu().numpy(), 0.5) # 0.5 is the threshold in cuesta's paper
-                
-                # Equivalent to pitch_activations_to_mf0 but with torch
-                # if len(salience_map.shape) == 2:
-                #     est_times, est_freqs = data.pitch_activations_to_mf0_torch(salience_map[:, :], 0.5) # 0.5 is the threshold in cuesta's paper
-                # else:
-                #     est_times, est_freqs = data.pitch_activations_to_mf0_torch(salience_map[0, :, :], 0.5) # 0.5 is the threshold in cuesta's paper
-                                
-                # rearrange output
-                for k, (tms, fqs) in enumerate(zip(est_times, est_freqs)):
-                    if any(fqs <= 0):
-                        est_freqs[k] = np.array([f for f in fqs if f > 0])
-                        # est_freqs[k] = torch.tensor([f for f in fqs if f > 0])
-                    else:
-                        est_freqs[k] = np.array(fqs)
-                        # est_freqs[k] = torch.tensor(fqs)
-
-                # F0 assignment to each source
-                f0_assigned_old, f0_assigned_new = f0_assignement(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources)
-                
-                if self.cuesta_model_trainable:
-                    salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
-                    
-                # salience_maps_reconstruct[i, 0, :, :] = torch.tensor(data.mf0_assigned_to_salience_map(est_times, f0_assigned_new))
-                
-                # f0_assigned = f0_assignement_torch(est_freqs, audio_length=self.audio_length, n_sources=self.n_sources) # Equivalent to f0_assignement but with torch
-                # print(f0_assigned)
-                
-                f0_hz[i, :, :] = f0_assigned_old
-
-        
-            #---------------------------------- Deuxième Test - Cuesta ----------------------------------#
-            # Passage de salience map à assignement des fréquences grâce à un réseau de neurones (pas encore fonctionnel)
-            
-            # salience_maps = self.F0Extractor(hcqt, dphase)
-            # f0_hz = self.F0Assigner(salience_maps)
 
         z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size], f0_hz, est un argument non utilisé dans l'encoder
 
@@ -506,6 +620,8 @@ class SourceFilterMixtureAutoencoder2(_Model):
         z = z.permute(0, 2, 1, 3)
         z = z.reshape((batch_size*n_sources, n_frames, embedding_size))
 
+        # print(f0_hz)
+        # print(f0_hz.shape)
         x = self.decoder(f0_hz, z)
 
 
@@ -554,7 +670,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
         if self.return_sources:
             if self.F0Extractor is not None:
                 if self.cuesta_model_trainable:
-                    return mix, sources, salience_maps, salience_maps_reconstruct
+                    return mix, sources
                 else:
                     return mix, sources
                     # return mix, sources, salience_maps, salience_maps_reconstruct

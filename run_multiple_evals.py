@@ -4,13 +4,22 @@ import os
 
 models_to_evaluate = [
         # 'unsupervised_2s_bc1song_mf0_1',
-        'unsupervised_4s_satb_bcbq_mf0_1_again',
+        # 'unsupervised_4s_satb_bcbq_mf0_1_again',
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis',
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_bis',
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_rangeFreq',
+        # '4s_cuestaTrainedNotFix_assignTrainedNotFix_BC1song_bis_bis',
+        # 'unsupervised_4s_satb_bcbq_mf0_1_again',
+        
+        # "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_10epo",
+        "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_10epo_bis",
+        # "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_15epo",
         ]
 
 eval_mode='default' # default evaluation
-eval_mode='fast' # fast evaluation
-eval_mode='robustness' # run many unique evaluations for each model, following different types of robustness tests
-eval_mode='robustness_vad' # run many unique evaluations for each model, with vad error tests only
+# eval_mode='fast' # fast evaluation
+# eval_mode='robustness' # run many unique evaluations for each model, following different types of robustness tests
+# eval_mode='robustness_vad' # run many unique evaluations for each model, with vad error tests only
 
 
 

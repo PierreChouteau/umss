@@ -18,6 +18,8 @@ import ddsp.spectral_ops
 from tqdm import tqdm
 import time
 
+from scipy.io import wavfile
+
 torch.manual_seed(0)
 
 # Parse arguments
@@ -142,7 +144,7 @@ for seed in range(n_seeds):
 
         mix = d[0].to(device)
         f0_hz = d[1].to(device)
-        # f0_hz = torch.zeros_like(d[1]).to(device)
+        f0_hz = torch.zeros_like(d[1]).to(device)
         target_sources = d[2].to(device)
         name = d[3]
         voices = d[4]
@@ -176,8 +178,23 @@ for seed in range(n_seeds):
 
                 # [batch_size * n_sources, n_samples]
                 source_estimates_masking = utils.masking_from_synth_signals_torch(mix, source_estimates, n_fft=2048, n_hop=256)
-
+                source_export = source_estimates_masking.reshape((batch_size, n_sources, n_samples))
+                
             target_sources = target_sources.transpose(1, 2)  # [batch_size, n_sources, n_samples]
+            
+            for id_voice in range(4):
+                wavfile.write(path_to_save_results_masking + '/test_voice{}_target.wav'.format(id_voice),
+                            16000,
+                            target_sources[0][id_voice].cpu().numpy().astype(np.float32),
+                            )
+                
+                wavfile.write(path_to_save_results_masking + '/test_voice{}_mask.wav'.format(id_voice),
+                            16000,
+                            source_export[0][id_voice].cpu().numpy().astype(np.float32),
+                            )
+            
+            
+            
             target_sources = target_sources.reshape((batch_size * n_sources, n_samples))
             source_estimates = source_estimates.reshape((batch_size * n_sources, n_samples))
 
@@ -201,6 +218,7 @@ for seed in range(n_seeds):
                 si_sdr_masking = em.si_sdr(target_sources, source_estimates_masking)
                 si_sdr_masking = si_sdr_masking.reshape((batch_size, n_sources, -1)).cpu().numpy()
 
+                # print(si_sdr_masking)
             # compute spectral SNR
             if compute_sp_snr : 
                 snr = em.spectral_snr(target_sources, source_estimates, fft_size=n_fft_metrics, overlap=overlap_metrics)

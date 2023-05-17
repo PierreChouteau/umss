@@ -1,7 +1,7 @@
 # ----- GENERAL PARAMETERS ---------------------------
 
-tag: 4s_CuestaInTrained_Fix_HCQT_Torch_bc1song
-comment: Test de l'implémentation de Cuesta à l'intérieur du modèle de Kilian (hcqt de torch). En utilisant les poids de tf pour initialiser les poids de pytorch. Et en utilisant des méthodes "TS" pour passer de salience à f0. On empeche également que le modèle de cuesta train.
+tag: 4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid1
+comment: 4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid1, changement de .eval() à .train() pour les deux modèles F0Extractor et F0Assigner, simplement F0Assigner entrainable. Sans l'ajout de controle sur la range frequentielle de chaque voix + test sigmoid1 multiplication par 50.
 
 architecture: SourceFilterMixtureAutoencoder2
 
@@ -12,7 +12,7 @@ architecture: SourceFilterMixtureAutoencoder2
 # -------- DATASET PARAMETERS -----------------------
 
 dataset = BCBQ
-one-song = True
+one-song = False
 one-example = False
 one-batch = False
 # parallel = True
@@ -21,19 +21,19 @@ samplerate = 16000
 example-length = 64000
 # crepe-hop-size = 256
 # crepe-center = True
-f0-cuesta = True
+f0-cuesta = False
 
 voices = satb  # satb
 # pre-emphasis-factor = 0.95
 # split = train        # if dataset = nus
 # source2-offset: 0.8  # if dataset = nus_mix
-# train-song = Nino Dios
-# val-song = Locus Iste
+# train-song = El Rossinyol
+# val-song = Locus Iste
 
 # -------- TRAINING PARAMETERS -----------------------
 
 epochs = 8000
-batch-size = 15
+batch-size = 8
 lr = 0.0001
 patience = 200
 lr-decay-patience = 80
@@ -93,4 +93,4 @@ f-ref-source-spec = 200
 
 return-sources = True
 cuesta-model = True
-cuesta-model-trainable = False
+cuesta-model-trainable = True
