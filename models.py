@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 
 import network_components as nc
 from ddsp import spectral_ops, synths, core
@@ -374,6 +375,26 @@ class Assigner(nn.Module):
         return out
 
 
+#----------------- Straight Through Estimator ------------------------------------------------------------------------------------------
+# Test of Straight Through Estimator to make the thresholding operation differentiable
+class STEFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, thresh):
+        return (input > thresh).float()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return F.hardtanh(grad_output), None
+    
+    
+class StraightThroughEstimator(nn.Module):
+    def __init__(self, thresh):
+        super(StraightThroughEstimator, self).__init__()
+        self.thresh = thresh
+        
+    def forward(self, x):
+        x = STEFunction.apply(x, self.thresh)
+        return x
 
 
 # -------- Unsupervised Model for Source Separation ----------------------------------------------------------------------------------------------
@@ -528,28 +549,38 @@ class SourceFilterMixtureAutoencoder2(_Model):
                 #     plt.savefig('./test_fig/salience_map_{}_torch.png'.format(i))
                 #     plt.close()
                 
-                # Extraction des f0s
-                sop = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 0, :, :])
-                sop = sop - 0.23
-                sop = nn.Sigmoid()(1000 * sop) # thres [0.23, 0.17, 0.15, 0.17]
                 
-                alto = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 1, :, :])
-                alto = alto - 0.17
-                alto = nn.Sigmoid()(1000 *alto) # thres [0.23, 0.17, 0.15, 0.17]
-                
-                tenor = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 2, :, :])
-                tenor = tenor - 0.15
-                tenor = nn.Sigmoid()(1000 * tenor ) # thres [0.23, 0.17, 0.15, 0.17]
-                
+                #-------------- Extraction des f0s
+                sop = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 0, :, :])               
+                alto = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 1, :, :])                
+                tenor = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 2, :, :])                
                 bass = nn.MaxPool2d(kernel_size=(360, 1))(assign[:, 3, :, :])
-                bass = bass - 0.17
-                bass = nn.Sigmoid()(1000 * bass) # thres [0.23, 0.17, 0.15, 0.17]
-                                
+
+                #-------------- Test d'un soft threshold (Sidmoid) pour obtenir les bonnes fréquences
+                # sop = sop - 0.23
+                # sop = nn.Sigmoid()(100 * sop) # thres [0.23, 0.17, 0.15, 0.17]
                 
-                # TODO: Changer le device
+                # alto = alto - 0.17
+                # alto = nn.Sigmoid()(100 *alto) # thres [0.23, 0.17, 0.15, 0.17]
+                
+                # tenor = tenor - 0.15
+                # tenor = nn.Sigmoid()(100 * tenor ) # thres [0.23, 0.17, 0.15, 0.17]
+                
+                # bass = bass - 0.17
+                # bass = nn.Sigmoid()(100 * bass) # thres [0.23, 0.17, 0.15, 0.17]
+                #--------------
+                
+                #-------------- Test d'un STE pour à la place du soft threshold
+                sop = StraightThroughEstimator(thresh=0.23)(sop)
+                alto = StraightThroughEstimator(thresh=0.17)(alto)
+                tenor = StraightThroughEstimator(thresh=0.15)(tenor)
+                bass = StraightThroughEstimator(thresh=0.17)(bass)
+                #--------------
+                
+                #-------------- TODO: Changer le device
                 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
                 
-                # Sert juste à extraire la valeurs des f0s
+                #-------------- Sert juste à extraire la valeurs des f0s
                 predict = data.predict_one_file_torch(assign.detach().cpu().numpy())
                 # predict = torch.from_numpy(predict).to(device)
                 
@@ -588,14 +619,11 @@ class SourceFilterMixtureAutoencoder2(_Model):
                 f0s = f0s.transpose(1, 2)  # [batch_size, n_frames, n_sources]
                 f0_hz = f0s
                 
-                # permet d'enlever les 0 qui font vriller le log derrière                
+                #-------------- permet d'enlever les 0 qui font vriller le log derrière                
                 f0_hz = f0_hz.clamp(min=1e-5)
-                # print(f0_hz[:, 0, 0])
                 
             else: 
-                with torch.no_grad():
-                    # With Hcqt from Pytorch
-                    salience_maps = self.F0Extractor.eval()(audio)
+                raise NotImplementedError
             
 
         z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size], f0_hz, est un argument non utilisé dans l'encoder
