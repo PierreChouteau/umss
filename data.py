@@ -587,7 +587,8 @@ def get_hcqt_params():
 
 
 def get_freq_grid():
-    """Get the hcqt frequency grid
+    """
+        Get the hcqt frequency grid
     """
     (bins_per_octave, n_octaves, _, _, f_min, _, over_sample) = get_hcqt_params()
     freq_grid = librosa.cqt_frequencies(
@@ -596,7 +597,8 @@ def get_freq_grid():
 
 
 def get_time_grid(n_time_frames):
-    """Get the hcqt time grid
+    """
+        Get the hcqt time grid
     """
     (_, _, _, sr, _, hop_length, _) = get_hcqt_params()
     time_grid = librosa.core.frames_to_time(
@@ -606,7 +608,8 @@ def get_time_grid(n_time_frames):
 
 
 def grid_to_bins(grid, start_bin_val, end_bin_val):
-    """Compute the bin numbers from a given grid
+    """
+        Compute the bin numbers from a given grid
     """
     bin_centers = (grid[1:] + grid[:-1])/2.0
     bins = np.concatenate([[start_bin_val], bin_centers, [end_bin_val]])
@@ -738,8 +741,9 @@ def compute_pump_features_from_mix(pump, mix):
 
 
 def pitch_activations_to_mf0(pitch_activation_mat, thresh):
-    """Convert a pitch activation map to multif0 by thresholding peak values
-    at thresh
+    """
+        Convert a pitch activation map to multif0 by thresholding peak values
+        at thresh
     """
     freqs = get_freq_grid()
     times = get_time_grid(pitch_activation_mat.shape[1])
@@ -758,30 +762,55 @@ def pitch_activations_to_mf0(pitch_activation_mat, thresh):
     return times, est_freqs, peak_thresh_mat
 
 
-def mf0_assigned_to_salience_map(mf0_times, mf0_freqs):
-    """Assign a multif0 to a salience map by finding the nearest salience
-    bin to each frequency in the multif0
+def mf0_assigned_to_salience_map(len_times, mf0_freqs):
+    """
+        Assign a multif0 array to a salience map by finding the nearest salience
+        bin to each frequency in the multif0
     """
     freq_grid = get_freq_grid()
-    freq_grid = np.array(freq_grid).astype(int)
+    freq_grid_int = np.array(freq_grid).astype(int)
+    
+    times = get_time_grid(len_times)
 
-    times = get_time_grid(mf0_times.shape[0])
-
-    salience_map = np.zeros((len(freq_grid), len(times)))
+    salience_map = np.zeros((len(freq_grid_int), len(times)))
+    freq_bins = np.zeros(salience_map.shape)
         
-    for id_time, (time, freqs) in enumerate(zip(mf0_times, mf0_freqs)):
-        for f in freqs:
-            if f != 0:
-                id_freq = np.argwhere(freq_grid == int(f))
-                # salience_map[id_freq, id_time] = peak_thresh_mat[id_freq, id_time]
-                salience_map[id_freq, id_time] = 1 
+    for id_time, freq in enumerate(mf0_freqs):
+        if freq != 0:
+            id_freq = np.argwhere(freq_grid_int == int(freq))
+            salience_map[id_freq, id_time] = 1.0 
 
-    return salience_map
+        freq_bins[:, id_time] = freq_grid
+        
+    return salience_map, freq_bins
+
+
+def mf0_assigned_to_salience_map_batch(mf0_predict, salience_shape):
+    """ Permet de reconstruire un batch de salience map à partir d'un batch prédictions de mf0
+
+    Args:
+        mf0_predict (array): Prédiction des mf0 (shape : (batch, time_bins, n_voice))
+        salience_shape (tuple): Shape de la salience map
+
+    Returns:
+        salience_maps: retourne le batch de salience maps reconstruit à partir des mf0 (shape : (batch, freq_bins, time_bins))
+    """
+    
+    batch, len_times = mf0_predict.shape
+    salience_maps_rec = np.zeros((salience_shape[0], salience_shape[2], salience_shape[3]))
+    freq_bins_batch = np.zeros((salience_shape[0], salience_shape[2], salience_shape[3]))
+    
+    for id_batch in range(batch):
+        mf0_freqs = mf0_predict[id_batch]
+        salience_maps_rec[id_batch,:,:], freq_bins_batch[id_batch, :, :] = mf0_assigned_to_salience_map(len_times, mf0_freqs)
+
+    return salience_maps_rec, freq_bins_batch
 
 
 def pitch_activations_to_mf0_torch(pitch_activation_mat_torch, thresh):
-    """Convert a pitch activation map to multif0 by thresholding peak values
-    at thresh
+    """
+        Convert a pitch activation map to multif0 by thresholding peak values
+        at thresh
     """
     freqs = get_freq_grid()
     times = get_time_grid(pitch_activation_mat_torch.size(1))
@@ -803,7 +832,8 @@ def pitch_activations_to_mf0_torch(pitch_activation_mat_torch, thresh):
 
 
 def save_multif0_output(times, freqs, output_path):
-    """save multif0 output to a csv file
+    """
+        Save multif0 output to a csv file
     """
     with open(output_path, 'w') as fhandle:
         csv_writer = csv.writer(fhandle, delimiter='\t')
