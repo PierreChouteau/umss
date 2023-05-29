@@ -174,27 +174,13 @@ for seed in range(n_seeds):
                 source_estimates_masking = source_estimates.reshape((batch_size * n_sources, n_samples))
 
             else:
-                mix_estimate, source_estimates = trained_model(mix, f0_hz)
+                mix_estimate, source_estimates, _, _ = trained_model(mix, f0_hz)
 
                 # [batch_size * n_sources, n_samples]
                 source_estimates_masking = utils.masking_from_synth_signals_torch(mix, source_estimates, n_fft=2048, n_hop=256)
                 source_export = source_estimates_masking.reshape((batch_size, n_sources, n_samples))
                 
             target_sources = target_sources.transpose(1, 2)  # [batch_size, n_sources, n_samples]
-            
-            for id_voice in range(4):
-                wavfile.write(path_to_save_results_masking + '/test_voice{}_target.wav'.format(id_voice),
-                            16000,
-                            target_sources[0][id_voice].cpu().numpy().astype(np.float32),
-                            )
-                
-                wavfile.write(path_to_save_results_masking + '/test_voice{}_mask.wav'.format(id_voice),
-                            16000,
-                            source_export[0][id_voice].cpu().numpy().astype(np.float32),
-                            )
-            
-            
-            
             target_sources = target_sources.reshape((batch_size * n_sources, n_samples))
             source_estimates = source_estimates.reshape((batch_size * n_sources, n_samples))
 

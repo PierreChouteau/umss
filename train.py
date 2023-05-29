@@ -64,8 +64,20 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
                 f0 = torch.zeros_like(f0).to(device)
                 
                 if args.cuesta_model_trainable:                   
-                    y_hat, sources, salience_maps, assignements = network(x, f0)
-                                        
+                    y_hat, sources, salience_maps, assignements = network(x, f0, mask_batch)
+
+                    # Save Salience map to verify stuff
+                    # for i in range(4):
+                    #     plt.imshow(assignements[0, i].detach().cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+                    #     plt.colorbar()
+                    #     plt.savefig('./test_fig/salience_map_{}_torch.png'.format(i))
+                    #     plt.close()
+                        
+                        # plt.imshow(assignements[0, i].detach().cpu().numpy() * mask_batch[0,i].cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+                        # plt.colorbar()
+                        # plt.savefig('./test_fig/salience_map_{}_torch_mask.png'.format(i))
+                        # plt.close()
+                    
                 else:                    
                     # y_hat, sources = network(x, f0, hcqt, dphase)
                     y_hat, sources = network(x, f0)
@@ -105,8 +117,8 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * 100
             loss += loss_salience
             
-            loss_voices = loss_salience_fn(assignements * mask_batch, assignements) * 100
-            loss += loss_voices
+            # loss_voices = loss_salience_fn(assignements * mask_batch, assignements) * 1000
+            # loss += loss_voices
         
         loss.backward()
         optimizer.step()
@@ -128,7 +140,7 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
     
     if args.cuesta_model_trainable:
         writer.add_scalar('Training_cost/loss_salience', loss_salience.item(), global_step=epoch-1)
-        writer.add_scalar('Training_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
+        # writer.add_scalar('Training_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
     
     return loss_container.avg
 
@@ -172,7 +184,7 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                     
                     if args.cuesta_model_trainable:
                         # y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
-                        y_hat, sources, salience_maps, assignements = network(x, f0)
+                        y_hat, sources, salience_maps, assignements = network(x, f0, mask_batch)
                         
                     else:
                         # y_hat, sources = network(x, f0, hcqt, dphase)
@@ -202,8 +214,8 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * 100
                 loss += loss_salience
                 
-                loss_voices = loss_salience_fn(assignements * mask_batch, assignements) * 100
-                loss += loss_voices
+                # loss_voices = loss_salience_fn(assignements * mask_batch, assignements) * 1000
+                # loss += loss_voices
                 
             loss_container.update(loss.item(), f0.size(0))
         
@@ -226,7 +238,7 @@ def valid(args, network, device, valid_sampler, epoch, writer):
         
         if args.cuesta_model_trainable:
             writer.add_scalar('Validation_cost/loss_salience', loss_salience.item(), global_step=epoch-1)
-            writer.add_scalar('Validation_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
+            # writer.add_scalar('Validation_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
         
         return loss_container.avg
 

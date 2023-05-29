@@ -12,8 +12,18 @@ models_to_evaluate = [
         # 'unsupervised_4s_satb_bcbq_mf0_1_again',
         
         # "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_10epo",
-        "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_10epo_bis",
+        # "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_10epo_bis",
         # "4s_cuestaTrainedFix_assignTrainedNotFix_BCBQ_bis_15epo",
+        # "4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid1",
+        
+        
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testreconstruction',
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testreconstruction1',
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testreconstruction2',
+        # '4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testreconstruction3',
+        
+        # "4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid_avecloss",
+        "4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid_avecloss1",
         ]
 
 eval_mode='default' # default evaluation

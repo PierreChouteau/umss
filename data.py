@@ -676,7 +676,7 @@ def hcqt_torch(audio):
         
         # Transormation en magnitude et phase 
         mag = torch.abs(audio_cqt)
-        mag = librosa.amplitude_to_db(mag.cpu(), ref=np.max)
+        mag = librosa.amplitude_to_db(mag.cpu(), ref=np.max) # TODO: Replace with torchaudio.transforms.AmplitudeToDB
         mags[:, h-1, :, :] = torch.tensor(mag)
         
         audio_cqt = audio_cqt.cpu()
@@ -876,7 +876,8 @@ def test_hcqt():
 #---------------- Assigner function ----------------#
 
 def pitch_activations_to_mf0_argmax(pitch_activation_mat, thresh):
-    """Convert pitch activation map to pitch by argmaxing
+    """
+        Convert pitch activation map to pitch by argmaxing
     """
     freqs = get_freq_grid()
     times = get_time_grid(pitch_activation_mat.shape[1])
@@ -904,9 +905,12 @@ def pitch_activations_to_mf0_argmax(pitch_activation_mat, thresh):
     return times, est_freqs
 
 
-def predict_one_file_torch(est_saliences, thresholds=[0.23, 0.17, 0.15, 0.17]):
+def mf0_predict_batch(est_saliences, thresholds=[0.23, 0.17, 0.15, 0.17]):
+    """
+        Convert a batch of salience maps to multif0 by thresholding peak values
+    """
     # construct the multi-pitch predictions
-    predictions = np.zeros([est_saliences.shape[0], est_saliences.shape[3], 5])
+    predictions = np.zeros([est_saliences.shape[0], est_saliences.shape[3], 5]) # shape = (batch, time, 5)
     
     for i in range(est_saliences.shape[0]):
         timestamp, sop = pitch_activations_to_mf0_argmax(est_saliences[i,0], thresh=thresholds[0])
@@ -915,21 +919,10 @@ def predict_one_file_torch(est_saliences, thresholds=[0.23, 0.17, 0.15, 0.17]):
         _, bas = pitch_activations_to_mf0_argmax(est_saliences[i, 3], thresh=thresholds[3])
         
         predictions[i, :, 0] = timestamp
-        predictions[i, :, 1] = sop
-        # predictions[i, :, 1] = np.where(predictions[i, : , 1] < 260, 0.0, predictions[i, : ,1])
-        # predictions[i, :, 1] = np.where(predictions[i, : , 1] > 1050, 0.0, predictions[i, : ,1])
-        
-        predictions[i, :, 2] = alt
-        # predictions[i, :, 2] = np.where(predictions[i, : , 2] < 190, 0.0, predictions[i, : ,2])
-        # predictions[i, :, 2] = np.where(predictions[i, : , 2] > 760, 0.0, predictions[i, : ,2])
-                
+        predictions[i, :, 1] = sop       
+        predictions[i, :, 2] = alt                
         predictions[i, :, 3] = ten
-        # predictions[i, :, 3] = np.where(predictions[i, : , 3] < 130, 0.0, predictions[i, : ,3])
-        # predictions[i, :, 3] = np.where(predictions[i, : , 3] > 525, 0.0, predictions[i, : ,3])
-                
         predictions[i, :, 4] = bas
-        # predictions[i, :, 4] = np.where(predictions[i, : , 4] < 80, 0.0, predictions[i, : ,4])
-        # predictions[i, :, 4] = np.where(predictions[i, : , 4] > 260, 0.0, predictions[i, : ,4])
 
     return predictions
 

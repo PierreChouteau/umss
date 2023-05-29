@@ -1,7 +1,7 @@
 # ----- GENERAL PARAMETERS ---------------------------
 
-tag: 4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid1
-comment: 4s_cuestaTrainedFix_assignTrainedNotFix_BC1song_testsigmoid1, changement de .eval() à .train() pour les deux modèles F0Extractor et F0Assigner, simplement F0Assigner entrainable. Sans l'ajout de controle sur la range frequentielle de chaque voix + test sigmoid1 multiplication par 50.
+tag: test
+comment: test, changement de .eval() à .train() pour les deux modèles F0Extractor et F0Assigner, simplement F0Assigner entrainable. Sans l'ajout de controle sur la range frequentielle de chaque voix (loss * 1000) + Avec l'ajout de contrainte (loss * 100) sur cuesta et les assignements
 
 architecture: SourceFilterMixtureAutoencoder2
 
@@ -12,7 +12,7 @@ architecture: SourceFilterMixtureAutoencoder2
 # -------- DATASET PARAMETERS -----------------------
 
 dataset = BCBQ
-one-song = False
+one-song = True
 one-example = False
 one-batch = False
 # parallel = True
@@ -33,7 +33,7 @@ voices = satb  # satb
 # -------- TRAINING PARAMETERS -----------------------
 
 epochs = 8000
-batch-size = 8
+batch-size = 15
 lr = 0.0001
 patience = 200
 lr-decay-patience = 80

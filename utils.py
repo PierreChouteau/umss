@@ -210,12 +210,20 @@ def load_model(tag, device='cpu', return_args=False):
     with open(Path(model_path, tag + '.json'), 'r') as stream:
         results = json.load(stream)
 
+    # load the best model in terms of validation loss
     target_model_path = next(Path(model_path).glob("%s*.pth" % tag))
     state = torch.load(
         target_model_path,
         map_location=device
     )
-
+    
+    # load the last saved model
+    checkpoint_model_path = next(Path(model_path).glob("%s*.chkpnt" % tag))
+    checkpoint = torch.load(
+        checkpoint_model_path,
+        map_location=device
+    )
+    
     architecture = results['args']['architecture']
     model_class = model_utls.ModelLoader.get_model(architecture)
     trained_model = model_class.from_config(results['args'])
@@ -228,6 +236,7 @@ def load_model(tag, device='cpu', return_args=False):
             trained_model.cuesta_model_trainable = True
 
     trained_model.load_state_dict(state)
+    # trained_model.load_state_dict(checkpoint['state_dict'])
     trained_model.eval()
     trained_model.to(device)
 
