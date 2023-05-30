@@ -398,3 +398,22 @@ def masking_unets2(trained_model, mix, f0_info, n_sources, n_fft=1024, n_hop=256
                                         win_length=n_fft, center=True, length=mix.shape[1])
         estimated_sources.append(source_estimate)
     return estimated_sources
+
+
+def get_training_masks(batch_mask_shape=(15,4,360,344), freq_bands=[(179, 302), (152, 274), (119, 241), (77, 180)], device='cpu'): 
+    """ Generates a batch of mask for the assignment part, to force the model 
+        to assign sources within a certain frequency band.
+
+    Args:
+        batch_mask_shape (tuple): shape of the batch of masks (batch_size, n_source, n_freq_bins, n_frames)
+        freq_band (list): list of tuples, each tuple is the indice of the frequency band [(min_source1, max_source1), ..., (min_source_n, max_source_n)]
+    """
+    batch_size, n_sources, n_freq_bins, n_frames = batch_mask_shape
+    mask = torch.zeros(batch_mask_shape[1:]).to(device)
+    
+    for id_freq_band, freq_band in enumerate(freq_bands):
+        mask[id_freq_band, freq_band[0]:freq_band[1], :] = 1
+    
+    mask_batch = mask[None,:,:,:].repeat((batch_size, 1, 1, 1))
+    
+    return mask_batch

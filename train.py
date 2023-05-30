@@ -31,15 +31,17 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
     if args.supervised: network.return_sources = True
     pbar = tqdm.tqdm(train_sampler, disable=args.quiet)
 
-    #--------------- TODO: Faire une fonction et la mettre dans utils
-    mask = torch.zeros((4, 360, 344)).to(device)
-    mask[0, 179:301+1, :] = 1
-    mask[1, 152:273+1, :] = 1
-    mask[2, 119:240+1, :] = 1
-    mask[3, 77:179+1, :] = 1
+    if args.loss_voices_weight > 0:
+        masks_batch = utils.get_training_masks(batch_mask_shape=(args.batch_size, args.n_sources, 360, 344), 
+                                        freq_bands=[(179, 302), (152, 274), (119, 241), (77, 180)], 
+                                        device=device)
     
-    mask_batch = mask[None,:,:,:].repeat((args.batch_size, 1, 1, 1))
-    #----------------------------------------------------------------
+        # plot masks - test debug
+        # for i in range(4):
+        #     plt.imshow(masks_batch[0, i].detach().cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+        #     plt.colorbar()
+        #     plt.savefig('./test_fig/mask_{}_torch.pdf'.format(i))
+        #     plt.close()
     
     for data in pbar:
         pbar.set_description("Training batch")
@@ -64,19 +66,19 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
                 f0 = torch.zeros_like(f0).to(device)
                 
                 if args.cuesta_model_trainable:                   
-                    y_hat, sources, salience_maps, assignements = network(x, f0, mask_batch)
+                    y_hat, sources, salience_maps, assignements = network(x, f0)
 
                     # Save Salience map to verify stuff
                     # for i in range(4):
                     #     plt.imshow(assignements[0, i].detach().cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
                     #     plt.colorbar()
-                    #     plt.savefig('./test_fig/salience_map_{}_torch.png'.format(i))
+                    #     plt.savefig('./test_fig/salience_map_{}_torch.pdf'.format(i))
                     #     plt.close()
                         
-                        # plt.imshow(assignements[0, i].detach().cpu().numpy() * mask_batch[0,i].cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
-                        # plt.colorbar()
-                        # plt.savefig('./test_fig/salience_map_{}_torch_mask.png'.format(i))
-                        # plt.close()
+                    #     plt.imshow(assignements[0, i].detach().cpu().numpy() * masks_batch[0,i].cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+                    #     plt.colorbar()
+                    #     plt.savefig('./test_fig/salience_map_{}_torch_mask.pdf'.format(i))
+                    #     plt.close()
                     
                 else:                    
                     # y_hat, sources = network(x, f0, hcqt, dphase)
@@ -112,13 +114,15 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             lsf_loss = lsf_loss_fn(lsf) * args.loss_lsf_weight
             loss -= lsf_loss
         
-        if args.cuesta_model_trainable:
+        if args.loss_saliences_weight > 0:
             loss_salience_fn = torch.nn.MSELoss()
-            loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * 100
+            loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * args.loss_saliences_weight
             loss += loss_salience
             
-            # loss_voices = loss_salience_fn(assignements * mask_batch, assignements) * 1000
-            # loss += loss_voices
+        if args.loss_voices_weight > 0:
+            loss_voices_fn = torch.nn.MSELoss()
+            loss_voices = loss_voices_fn(assignements * masks_batch, assignements) * args.loss_voices_weight
+            loss += loss_voices
         
         loss.backward()
         optimizer.step()
@@ -138,9 +142,10 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             writer.add_audio(f'train/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
             writer.add_audio(f'train/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
     
-    if args.cuesta_model_trainable:
+    if args.loss_saliences_weight > 0:
         writer.add_scalar('Training_cost/loss_salience', loss_salience.item(), global_step=epoch-1)
-        # writer.add_scalar('Training_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
+    if args.loss_voices_weight > 0:
+        writer.add_scalar('Training_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
     
     return loss_container.avg
 
@@ -148,17 +153,12 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
 def valid(args, network, device, valid_sampler, epoch, writer):
     loss_container = utils.AverageMeter()
     network.eval()
-    if args.supervised: network.return_sources = True    
+    if args.supervised: network.return_sources = True
     
-    #--------------- TODO: Faire une fonction et la mettre dans utils
-    mask = torch.zeros((4, 360, 344)).to(device)
-    mask[0, 179:301+1, :] = 1
-    mask[1, 152:273+1, :] = 1
-    mask[2, 119:240+1, :] = 1
-    mask[3, 77:179+1, :] = 1
-    
-    mask_batch = mask[None,:,:,:].repeat((args.batch_size, 1, 1, 1))
-    #----------------------------------------------------------------
+    if args.loss_voices_weight > 0:
+        masks_batch = utils.get_training_masks(batch_mask_shape=(args.batch_size, args.n_sources, 360, 344), 
+                                        freq_bands=[(179, 302), (152, 274), (119, 241), (77, 180)], 
+                                        device=device)
     
     with torch.no_grad():
         for data in valid_sampler:
@@ -184,7 +184,7 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                     
                     if args.cuesta_model_trainable:
                         # y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
-                        y_hat, sources, salience_maps, assignements = network(x, f0, mask_batch)
+                        y_hat, sources, salience_maps, assignements = network(x, f0)
                         
                     else:
                         # y_hat, sources = network(x, f0, hcqt, dphase)
@@ -209,13 +209,15 @@ def valid(args, network, device, valid_sampler, epoch, writer):
             loss = loss_fn(x, y_hat)
             
             
-            if args.cuesta_model_trainable:
+            if args.loss_saliences_weight > 0:
                 loss_salience_fn = torch.nn.MSELoss()
-                loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * 100
+                loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * args.loss_saliences_weight
                 loss += loss_salience
-                
-                # loss_voices = loss_salience_fn(assignements * mask_batch, assignements) * 1000
-                # loss += loss_voices
+            
+            if args.loss_voices_weight > 0:
+                loss_voices_fn = torch.nn.MSELoss()
+                loss_voices = loss_voices_fn(assignements * masks_batch, assignements) * args.loss_voices_weight
+                loss += loss_voices
                 
             loss_container.update(loss.item(), f0.size(0))
         
@@ -236,9 +238,10 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 writer.add_audio(f'valid/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
                 writer.add_audio(f'valid/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)    
         
-        if args.cuesta_model_trainable:
+        if args.loss_saliences_weight > 0:
             writer.add_scalar('Validation_cost/loss_salience', loss_salience.item(), global_step=epoch-1)
-            # writer.add_scalar('Validation_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
+        if args.loss_voices_weight > 0:
+            writer.add_scalar('Validation_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
         
         return loss_container.avg
 
@@ -362,6 +365,8 @@ def main():
     parser.add_argument('--lsf-loss-weight', type=float, default=0.0)
     parser.add_argument('--noise-gain-loss-weight', type=float, default=0.0)
     parser.add_argument('--noise-mags-loss-weight', type=float, default=0.0)
+    parser.add_argument('--loss-saliences-weight', type=float, default=0.0)
+    parser.add_argument('--loss-voices-weight', type=float, default=0.0)
 
 
 

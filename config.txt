@@ -1,7 +1,7 @@
 # ----- GENERAL PARAMETERS ---------------------------
 
-tag: test
-comment: test, changement de .eval() à .train() pour les deux modèles F0Extractor et F0Assigner, simplement F0Assigner entrainable. Sans l'ajout de controle sur la range frequentielle de chaque voix (loss * 1000) + Avec l'ajout de contrainte (loss * 100) sur cuesta et les assignements
+tag: testA
+comment: testA, changement de .eval() à .train() pour les deux modèles F0Extractor et F0Assigner, simplement F0Assigner entrainable. Sans l'ajout de controle sur la range frequentielle de chaque voix (loss * 1000) + Avec l'ajout de contrainte (loss * 100) sur cuesta et les assignements
 
 architecture: SourceFilterMixtureAutoencoder2
 
@@ -53,6 +53,9 @@ loss-logmel-weight = 0
 loss-delta-freq-weight = 0
 loss-delta-time-weight = 0
 loss-lsf-weight = 0  # LSF regularization loss
+
+loss-saliences-weight = 100
+loss-voices-weight = 1000
 
 ss-loss-weight = 0
 harmonic-amp-loss-weight = 1
