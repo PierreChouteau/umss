@@ -97,3 +97,4 @@ f-ref-source-spec = 200
 return-sources = True
 cuesta-model = True
 cuesta-model-trainable = True
+method = sigmoid # other possibilities: sigmoid, amplitude, ste, reconstruction

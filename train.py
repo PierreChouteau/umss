@@ -393,6 +393,8 @@ def main():
     parser.add_argument('--return-sources', action='store_true', default=False)
     parser.add_argument('--cuesta-model-trainable', action='store_true', default=False,
                         help='if True, cuesta model is trainable')
+    parser.add_argument('--method', type=str, default='sigmoid',
+                        help='method for extract mf0 from assigned salience')
 
 
     parser.add_argument('--nb-workers', type=int, default=4,
@@ -489,6 +491,7 @@ def main():
             model_to_train.F0Assigner = model_to_train.F0Assigner.eval()
             
         print('Cuesta_trainable:', model_to_train.cuesta_model_trainable)
+        print('method:', model_to_train.method)
         
     model_to_train.to(device)
 
