@@ -476,17 +476,17 @@ class mf0Extract_from_salience():
         assigned_salience_tenor_rec, _ = data.mf0_assigned_to_salience_map_batch(mf0[:, :, 3], assigned_saliences.shape)
         assigned_salience_bass_rec, _ = data.mf0_assigned_to_salience_map_batch(mf0[:, :, 4], assigned_saliences.shape)
                         
-        assigned_salience_rec = torch.stack((torch.from_numpy(assigned_salience_sop_rec), 
-                                                torch.from_numpy(assigned_salience_alto_rec), 
-                                                torch.from_numpy(assigned_salience_tenor_rec), 
-                                                torch.from_numpy(assigned_salience_bass_rec)
-                                                ), 
+        assigned_salience_rec = torch.stack((torch.from_numpy(assigned_salience_sop_rec.astype(np.float32)), 
+                                             torch.from_numpy(assigned_salience_alto_rec.astype(np.float32)), 
+                                             torch.from_numpy(assigned_salience_tenor_rec.astype(np.float32)), 
+                                             torch.from_numpy(assigned_salience_bass_rec.astype(np.float32))
+                                             ), 
                                             dim=1).to(assigned_saliences.device)
         
         f0_bins_batch = torch.stack([torch.from_numpy(f0_bins_salience) for _ in range(assigned_salience_rec.size(1))], dim=1).to(assigned_saliences.device)
 
         # Copy du gradient - eq à l'opération de Straight Through Estimator
-        assign_salience = assigned_saliences - assigned_saliences.detach() + assigned_salience_rec
+        assign_salience = assigned_saliences + (assigned_salience_rec - assigned_saliences).detach()
         
         # Multiplication de la salience entière par l'axe des fréquences
         assign_salience *= f0_bins_batch
@@ -495,6 +495,42 @@ class mf0Extract_from_salience():
         f0s = assign_salience.sum(dim=2)
         
         return f0s, assigned_salience_rec
+    
+    
+    def softmax(self, assigned_saliences):
+                
+        freq_grid = data.get_freq_grid()       
+        freq_grid_frame = freq_grid[:, None].repeat(assigned_saliences.size(3), axis=1)
+        freq_grid_frame = freq_grid_frame[None, :,:].repeat(assigned_saliences.size(1), axis=0)
+        freq_grid_batch = freq_grid_frame[None,:,:,:].repeat(assigned_saliences.size(0), axis=0)
+        
+        # for i in range(4):
+        #     plt.imshow(assigned_saliences[0, i].detach().cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+        #     plt.colorbar()
+        #     plt.savefig('./test_fig/assigned_salience_before_softmax{}_torch.pdf'.format(i))
+        #     plt.close()
+        
+        # assign_saliences_softmax = F.softmax(assigned_saliences, dim=2)
+        
+        # for i in range(4):
+        #     plt.imshow(assigned_saliences[0, i].detach().cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+        #     plt.colorbar()
+        #     plt.savefig('./test_fig/assigned_salience_after_softmax{}_torch.pdf'.format(i))
+        #     plt.close()
+        
+        assign_saliences = assigned_saliences * torch.from_numpy(freq_grid_batch).to(assigned_saliences.device)
+        
+        f0s = assign_saliences.sum(dim=2)
+
+        # print(f0s[0,:,:])
+        # plot figure pour voir si je fais la bonne chose... C'est le cas ! 
+        # for i in range(4):
+        #     plt.imshow(freq_grid_batch[i, 0], origin='lower', aspect='auto', cmap='magma')
+        #     plt.colorbar()
+        #     plt.savefig('./test_fig/test{}_torch.pdf'.format(i))
+        #     plt.close()
+            
+        return f0s, None
             
             
     def forward(self, assigned_saliences):
@@ -506,6 +542,8 @@ class mf0Extract_from_salience():
             return self.amplitude(assigned_saliences)
         elif self.method == 'ste':
             return self.ste(assigned_saliences)
+        elif self.method == 'softmax':
+            return self.softmax(assigned_saliences)
         else:
             raise ValueError('Unknown method: %s' % self.method)
 
@@ -519,7 +557,7 @@ class STEFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        return F.hardtanh(grad_output), None
+        return F.hardtanh(grad_output, -10, 10), None
     
     
 class StraightThroughEstimator(nn.Module):
@@ -683,7 +721,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                    method=method,
                    )
 
-    def forward(self, audio, f0_hz, masks=None, plot_figures=True):
+    def forward(self, audio, f0_hz, masks=None, plot_figures=False):
         # audio [batch_size, n_samples]
         # f0_hz [batch_size, n_freq_frames, n_sources] : tensor qui stack des tensors     
 
@@ -695,10 +733,10 @@ class SourceFilterMixtureAutoencoder2(_Model):
             
                 with torch.no_grad():
                     # With Hcqt from Pytorch (nnAudio) - Salience_maps extraction
-                    salience_maps = self.F0Extractor.train()(audio) # .train() to be sure that the model is in train mode, we update batchnorm        
+                    salience_maps = self.F0Extractor(audio) # .eval() to be sure that the model is in inference mode, we do not update batchnorm        
                     
                 # From Saliences map to saliences assignment
-                assigned_saliences = self.F0Assigner.train()(salience_maps) # .train() to be sure that the model is in train mode, we update batchnorm 
+                assigned_saliences = self.F0Assigner(salience_maps) # .eval() to be sure that the model is in inference mode, we do not update batchnorm  
                 if masks is not None: assigned_saliences = assigned_saliences * masks; print('ATTENTION MASK') # Attention à cette ajout, c'était un simple test
                 
                 # from assigned salience to mf0s
@@ -746,6 +784,15 @@ class SourceFilterMixtureAutoencoder2(_Model):
                             plt.colorbar()
                             plt.savefig('./test_fig/salience_map_{}_rec_torch.pdf'.format(i))
                             plt.close()
+                            
+                            # test de la reconstruction...
+                            # for k in range(assigned_saliences_rec[0,i].shape[0]):
+                            #     for j in range(assigned_saliences_rec[0,i].shape[1]):
+                            #         if (assigned_saliences_rec[0,i,k,j].cpu() == torch.tensor(0.0)) or (assigned_saliences_rec[0,i,k,j].cpu() == torch.tensor(1.0)):
+                            #             print('ok')
+                            #         else:
+                            #             print('problème', assigned_saliences_rec[0,i,k,j].cpu().numpy())
+                            # print('fini')
                                 
             else: 
             # saliences extraction and assignment are not trainable
@@ -764,7 +811,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
 
         if self.voiced_unvoiced_diff:
             # use different noise models for voiced and unvoiced frames (this option was not used in the experiments)
-            voiced_unvoiced = torch.where(f0_hz > 0., torch.tensor(1., device=f0_hz.device),
+            voiced_unvoiced = torch.where(f0_hz > 1., torch.tensor(1., device=f0_hz.device),
                                                   torch.tensor(0., device=f0_hz.device))[:, :, None]
         else:
             # one noise model (this option was used in the experiments for the paper)
@@ -825,7 +872,10 @@ class SourceFilterMixtureAutoencoder2(_Model):
         if self.return_sources:
             if self.F0Extractor is not None:
                 if self.cuesta_model_trainable:
-                    return mix, sources, salience_maps, assigned_saliences
+                    if self.method == 'reconstruction':
+                        return mix, sources, salience_maps, assigned_saliences, assigned_saliences_rec, f0_hz
+                    else:
+                        return mix, sources, salience_maps, assigned_saliences, f0_hz
                 else:
                     return mix, sources
                     # return mix, sources, salience_maps, salience_maps_reconstruct

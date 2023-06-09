@@ -1,7 +1,7 @@
 # ----- GENERAL PARAMETERS ---------------------------
 
-tag: testA
-comment: testA, changement de .eval() à .train() pour les deux modèles F0Extractor et F0Assigner, simplement F0Assigner entrainable. Sans l'ajout de controle sur la range frequentielle de chaque voix (loss * 1000) + Avec l'ajout de contrainte (loss * 100) sur cuesta et les assignements
+tag: EXAMPLE
+comment: EXAMPLE
 
 architecture: SourceFilterMixtureAutoencoder2
 
@@ -35,6 +35,7 @@ voices = satb  # satb
 epochs = 8000
 batch-size = 15
 lr = 0.0001
+lr-f0 = 0.0001
 patience = 200
 lr-decay-patience = 80
 lr-decay-gamma = 0.98
@@ -54,8 +55,10 @@ loss-delta-freq-weight = 0
 loss-delta-time-weight = 0
 loss-lsf-weight = 0  # LSF regularization loss
 
-loss-saliences-weight = 100
-loss-voices-weight = 1000
+loss-saliences-weight = 0
+loss-voices-weight = 0
+loss-comittment-weight = 0
+loss-f0-weight = 0
 
 ss-loss-weight = 0
 harmonic-amp-loss-weight = 1
@@ -97,4 +100,4 @@ f-ref-source-spec = 200
 return-sources = True
 cuesta-model = True
 cuesta-model-trainable = True
-method = sigmoid # other possibilities: sigmoid, amplitude, ste, reconstruction
+method = ste # other possibilities: sigmoid, amplitude, ste, reconstruction

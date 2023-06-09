@@ -24,16 +24,29 @@ from ddsp import losses
 tqdm.monitor_interval = 0
 
 def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoch, writer):
+    
+    # Defining containers
     loss_container = utils.AverageMeter()
+    loss_salience_container = utils.AverageMeter()
+    loss_voices_container = utils.AverageMeter()
+    loss_reconstruction_container = utils.AverageMeter()
+    loss_comittment_container = utils.AverageMeter()
+    loss_f0_container = utils.AverageMeter()
+    
+    # Set full network in train mode or eval mode
     network.train()
+    network.F0Extractor.eval()
+    network.F0Assigner.eval()
+    
     if args.loss_lsf_weight > 0: network.return_lsf = True
     if args.ss_loss_weight > 0: network.return_synth_controls = True
     if args.supervised: network.return_sources = True
     pbar = tqdm.tqdm(train_sampler, disable=args.quiet)
 
     if args.loss_voices_weight > 0:
+        # Create masks to force the model to assign each voice to a different source
         masks_batch = utils.get_training_masks(batch_mask_shape=(args.batch_size, args.n_sources, 360, 344), 
-                                        freq_bands=[(179, 302), (152, 274), (119, 241), (77, 180)], 
+                                        freq_bands=[(179, 285), (152, 260), (129, 225), (88, 189)], 
                                         device=device)
     
         # plot masks - test debug
@@ -63,14 +76,17 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         if network.return_sources == True:
             if network.F0Extractor is not None:
                 # test to show that if we use F0extractor, there is no need for the frequency
-                f0 = torch.zeros_like(f0).to(device)
+                # f0 = torch.zeros_like(f0).to(device)
                 
-                if args.cuesta_model_trainable:                   
-                    y_hat, sources, salience_maps, assignements = network(x, f0)
+                if args.cuesta_model_trainable:
+                    if args.method == 'reconstruction':
+                        y_hat, sources, salience_maps, assignements, assignements_rec, f0_network = network(x, f0)
+                    else:
+                        y_hat, sources, salience_maps, assignements, f0_network = network(x, f0)
 
                     # Save Salience map to verify stuff
                     # for i in range(4):
-                    #     plt.imshow(assignements[0, i].detach().cpu().numpy(), origin='lower', aspect='auto', cmap='magma')
+                    #     plt.imshow(assignements[0, i].detach().cpu().numpy(), origin='lower',aspect='auto', cmap='magma')
                     #     plt.colorbar()
                     #     plt.savefig('./test_fig/salience_map_{}_torch.pdf'.format(i))
                     #     plt.close()
@@ -98,7 +114,9 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
                                           delta_time_weight=args.loss_delta_time_weight)
             if args.supervised:
                 x = data[2].transpose(1, 2).reshape((args.batch_size * args.n_sources, -1)).to(device)  # true sources [batch_size * n_sources, n_samples]
-                y_hat = y_hat[1].reshape((args.batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
+                # y_hat = y_hat[1].reshape((args.batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
+                y_hat = sources.reshape((args.batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
+                
             reconstruction_loss = loss_fn(x, y_hat) * args.reconstruction_loss_weight
             loss += reconstruction_loss
 
@@ -123,10 +141,27 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             loss_voices_fn = torch.nn.MSELoss()
             loss_voices = loss_voices_fn(assignements * masks_batch, assignements) * args.loss_voices_weight
             loss += loss_voices
+            
+        if args.loss_comittment_weight > 0:
+            comittment_loss_fn = torch.nn.MSELoss()
+            loss_comittment = comittment_loss_fn(assignements, assignements_rec) * args.loss_comittment_weight
+            loss += loss_comittment
+            
+        if args.loss_f0_weight > 0:
+            f0_network = f0_network.reshape(f0.shape)
+    
+            loss_f0_fn = torch.nn.L1Loss()
+            loss_f0 = loss_f0_fn(f0_network, f0.detach()) * args.loss_f0_weight
+            # loss += loss_f0
         
         loss.backward()
         optimizer.step()
-        loss_container.update(loss.item(), f0.size(0))       
+        loss_container.update(loss.item(), f0.size(0))
+        if args.loss_saliences_weight > 0: loss_salience_container.update(loss_salience.item(), f0.size(0))  
+        if args.loss_voices_weight > 0: loss_voices_container.update(loss_voices.item(), f0.size(0))   
+        if args.reconstruction_loss_weight > 0: loss_reconstruction_container.update(reconstruction_loss.item(), f0.size(0))
+        if args.loss_comittment_weight > 0: loss_comittment_container.update(loss_comittment.item(), f0.size(0))
+        if args.loss_f0_weight > 0: loss_f0_container.update(loss_f0.item(), f0.size(0))
     
     # log audio to tensorboard
     if network.return_sources == True:
@@ -142,22 +177,42 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             writer.add_audio(f'train/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
             writer.add_audio(f'train/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
     
+    if args.reconstruction_loss_weight > 0:
+        writer.add_scalar('Training_cost/loss_reconstruction', loss_reconstruction_container.avg, global_step=epoch)
     if args.loss_saliences_weight > 0:
-        writer.add_scalar('Training_cost/loss_salience', loss_salience.item(), global_step=epoch-1)
+        writer.add_scalar('Training_cost/loss_salience', loss_salience_container.avg, global_step=epoch)
     if args.loss_voices_weight > 0:
-        writer.add_scalar('Training_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
+        writer.add_scalar('Training_cost/loss_voices', loss_voices_container.avg, global_step=epoch)
+    if args.loss_comittment_weight > 0:
+        writer.add_scalar('Training_cost/loss_comittment', loss_comittment_container.avg, global_step=epoch)
+    
+    if args.loss_f0_weight > 0:
+        writer.add_scalar('Training_cost/loss_f0', loss_f0_container.avg, global_step=epoch)
     
     return loss_container.avg
 
 
 def valid(args, network, device, valid_sampler, epoch, writer):
+    
+    # Defining containers
     loss_container = utils.AverageMeter()
+    loss_salience_container = utils.AverageMeter()
+    loss_voices_container = utils.AverageMeter()
+    loss_reconstruction_container = utils.AverageMeter()
+    loss_comittment_container = utils.AverageMeter()
+    loss_f0_container = utils.AverageMeter()
+    
+    # Set full network in eval mode
     network.eval()
+    network.F0Extractor.eval()
+    network.F0Assigner.eval()
+    
     if args.supervised: network.return_sources = True
     
     if args.loss_voices_weight > 0:
+        # Create masks to force the model to assign each voice to a different source
         masks_batch = utils.get_training_masks(batch_mask_shape=(args.batch_size, args.n_sources, 360, 344), 
-                                        freq_bands=[(179, 302), (152, 274), (119, 241), (77, 180)], 
+                                        freq_bands=[(179, 285), (152, 260), (129, 225), (88, 189)], 
                                         device=device)
     
     with torch.no_grad():
@@ -180,11 +235,16 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 if network.F0Extractor is not None:
                     
                     # test to show that if we use F0extractor, there is no need for the frequency
-                    f0 = torch.zeros_like(f0).to(device)
+                    # f0 = torch.zeros_like(f0).to(device)
                     
                     if args.cuesta_model_trainable:
-                        # y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
-                        y_hat, sources, salience_maps, assignements = network(x, f0)
+                        
+                        if args.method == 'reconstruction':
+                            y_hat, sources, salience_maps, assignements, assignements_rec, f0_network = network(x, f0)
+                        
+                        else:
+                            # y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
+                            y_hat, sources, salience_maps, assignements, f0_network = network(x, f0)
                         
                     else:
                         # y_hat, sources = network(x, f0, hcqt, dphase)
@@ -196,31 +256,52 @@ def valid(args, network, device, valid_sampler, epoch, writer):
             else:
                 y_hat = network(x, f0)
 
-            loss_fn = losses.SpectralLoss(fft_sizes=args.loss_nfft,
-                                          mag_weight=args.loss_mag_weight,
-                                          logmag_weight=args.loss_logmag_weight,
-                                          logmel_weight=args.loss_logmel_weight,
-                                          delta_freq_weight=args.loss_delta_freq_weight,
-                                          delta_time_weight=args.loss_delta_time_weight)
-            if args.supervised:
-                batch_size = f0.size(0)
-                x = data[2].transpose(1, 2).reshape((batch_size * args.n_sources, -1)).to(device)  # true sources [batch_size * n_sources, n_samples]
-                y_hat = y_hat[1].reshape((batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
-            loss = loss_fn(x, y_hat)
+            loss = 0.
+            if args.reconstruction_loss_weight > 0:
+                loss_fn = losses.SpectralLoss(fft_sizes=args.loss_nfft,
+                                            mag_weight=args.loss_mag_weight,
+                                            logmag_weight=args.loss_logmag_weight,
+                                            logmel_weight=args.loss_logmel_weight,
+                                            delta_freq_weight=args.loss_delta_freq_weight,
+                                            delta_time_weight=args.loss_delta_time_weight)
+                if args.supervised:
+                    batch_size = f0.size(0)
+                    x = data[2].transpose(1, 2).reshape((batch_size * args.n_sources, -1)).to(device)  # true sources [batch_size * n_sources, n_samples]
+                    # y_hat = y_hat[1].reshape((batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
+                    y_hat = sources.reshape((batch_size * args.n_sources, -1))  # source estimates [batch_size * n_sources, n_samples]
+                
+                reconstruction_loss = loss_fn(x, y_hat) * args.reconstruction_loss_weight
+                loss += reconstruction_loss
             
             
             if args.loss_saliences_weight > 0:
                 loss_salience_fn = torch.nn.MSELoss()
                 loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * args.loss_saliences_weight
-                loss += loss_salience
+                # loss += loss_salience
             
             if args.loss_voices_weight > 0:
                 loss_voices_fn = torch.nn.MSELoss()
                 loss_voices = loss_voices_fn(assignements * masks_batch, assignements) * args.loss_voices_weight
-                loss += loss_voices
+                # loss += loss_voices
                 
-            loss_container.update(loss.item(), f0.size(0))
-        
+            if args.loss_comittment_weight > 0:
+                comittment_loss_fn = torch.nn.MSELoss()
+                loss_comittment = comittment_loss_fn(assignements, assignements_rec) * args.loss_comittment_weight
+                # loss += loss_comittment
+            
+            if args.loss_f0_weight > 0:
+                f0_network = f0_network.reshape(f0.shape)
+                
+                loss_f0_fn = torch.nn.L1Loss()
+                loss_f0 = loss_f0_fn(f0_network, f0) * args.loss_f0_weight
+                # loss += loss_f0
+            
+            loss_container.update(loss.item(), f0.size(0))   
+            if args.loss_saliences_weight > 0: loss_salience_container.update(loss_salience.item(), f0.size(0))  
+            if args.loss_voices_weight > 0: loss_voices_container.update(loss_voices.item(), f0.size(0))   
+            if args.reconstruction_loss_weight > 0: loss_reconstruction_container.update(reconstruction_loss.item(), f0.size(0))
+            if args.loss_comittment_weight > 0: loss_comittment_container.update(loss_comittment.item(), f0.size(0))
+            if args.loss_f0_weight > 0: loss_f0_container.update(loss_f0.item(), f0.size(0))
         
         # end for loop
         # log audio to tensorboard
@@ -238,10 +319,17 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 writer.add_audio(f'valid/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
                 writer.add_audio(f'valid/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)    
         
+        if args.reconstruction_loss_weight > 0:
+            writer.add_scalar('Validation_cost/loss_reconstruction', loss_reconstruction_container.avg, global_step=epoch)
         if args.loss_saliences_weight > 0:
-            writer.add_scalar('Validation_cost/loss_salience', loss_salience.item(), global_step=epoch-1)
+            writer.add_scalar('Validation_cost/loss_salience', loss_salience_container.avg, global_step=epoch)
         if args.loss_voices_weight > 0:
-            writer.add_scalar('Validation_cost/loss_voices', loss_voices.item(), global_step=epoch-1)
+            writer.add_scalar('Validation_cost/loss_voices', loss_voices_container.avg, global_step=epoch)
+        if args.loss_comittment_weight > 0:
+            writer.add_scalar('Validation_cost/loss_comittment', loss_comittment_container.avg, global_step=epoch)
+        
+        if args.loss_f0_weight > 0:
+            writer.add_scalar('Validation_cost/loss_f0', loss_f0_container.avg, global_step=epoch)
         
         return loss_container.avg
 
@@ -337,6 +425,8 @@ def main():
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=0.001,
                         help='learning rate, defaults to 1e-3')
+    parser.add_argument('--lr-f0', type=float, default=0.0001,
+                        help='learning rate for mf0 extraction, defaults to 1e-4')
     parser.add_argument('--patience', type=int, default=140,
                         help='maximum number of epochs to train (default: 140)')
     parser.add_argument('--lr-decay-patience', type=int, default=80,
@@ -367,6 +457,8 @@ def main():
     parser.add_argument('--noise-mags-loss-weight', type=float, default=0.0)
     parser.add_argument('--loss-saliences-weight', type=float, default=0.0)
     parser.add_argument('--loss-voices-weight', type=float, default=0.0)
+    parser.add_argument('--loss-comittment-weight', type=float, default=0.0)
+    parser.add_argument('--loss-f0-weight', type=float, default=0.0)
 
 
 
@@ -484,19 +576,25 @@ def main():
         
         if args.cuesta_model_trainable:
             model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
-            model_to_train.F0Extractor = model_to_train.F0Extractor.train()
-            model_to_train.F0Assigner = model_to_train.F0Assigner.train()
         else:
-            model_to_train.F0Extractor = model_to_train.F0Extractor.eval()
-            model_to_train.F0Assigner = model_to_train.F0Assigner.eval()
+            raise NotImplementedError
             
         print('Cuesta_trainable:', model_to_train.cuesta_model_trainable)
         print('method:', model_to_train.method)
         
     model_to_train.to(device)
-
+    
     optimizer = torch.optim.Adam(
-        model_to_train.parameters(),
+        [
+            {'params': model_to_train.encoder.parameters()},
+            {'params': model_to_train.decoder.parameters()},
+            {'params': model_to_train.dense_outs.parameters()},
+            {'params': model_to_train.gru_noise_mag.parameters()},
+            {'params': model_to_train.source_filter_synth.parameters()},
+            
+            {'params': model_to_train.F0Extractor.parameters(), 'lr': args.lr_f0},
+            {'params': model_to_train.F0Assigner.parameters(), 'lr': args.lr_f0},
+        ],
         lr=args.lr,
         weight_decay=args.weight_decay
     )
