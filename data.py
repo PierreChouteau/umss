@@ -196,7 +196,44 @@ def load_datasets(parser, args):
 
             train_dataset = torch.utils.data.ConcatDataset([bc_train, bq_train])
             valid_dataset = torch.utils.data.ConcatDataset([bc_val, bq_val])
+            
+    elif args.dataset == 'Cantoria':
+        parser.add_argument('--confidence-threshold', type=float, default=0.4)
+        parser.add_argument('--samplerate', type=int, default=16000)
+        parser.add_argument('--example-length', type=int, default=64000)
+        parser.add_argument('--voices', type=str, default='satb')
+        parser.add_argument('--train-song', type=str, default='EJB1', choices=['EJB2', 'EJB1'])
+        parser.add_argument('--val-song', type=str, default='EJB2', choices=['EJB2', 'EJB1'])
+        parser.add_argument('--f0-cuesta', action='store_true', default=False)
+        args = parser.parse_args()
 
+
+        train_dataset = CantoriaDataSets(song_name=args.train_song,
+                                        conf_threshold=args.confidence_threshold, 
+                                        example_length=args.example_length, 
+                                        allowed_voices=args.voices,
+                                        return_name=False, 
+                                        n_sources=args.n_sources, 
+                                        random_mixes=False, 
+                                        f0_from_mix=args.f0_cuesta, 
+                                        cunet_original=args.original_cu_net, 
+                                        cuesta_model=args.cuesta_model, 
+                                        cuesta_model_trainable=args.cuesta_model_trainable,
+                                        )
+
+        valid_dataset = CantoriaDataSets(song_name=args.val_song,
+                                        conf_threshold=args.confidence_threshold, 
+                                        example_length=args.example_length, 
+                                        allowed_voices=args.voices,
+                                        return_name=False, 
+                                        n_sources=args.n_sources, 
+                                        random_mixes=False, 
+                                        f0_from_mix=args.f0_cuesta, 
+                                        cunet_original=args.original_cu_net, 
+                                        cuesta_model=args.cuesta_model, 
+                                        cuesta_model_trainable=args.cuesta_model_trainable,
+        )
+        
     return train_dataset, valid_dataset, args
 
 
@@ -544,6 +581,193 @@ class BCBQDataSets(torch.utils.data.Dataset):
 
         voices = ''.join(['satb'[x] for x in voice_indices])
 
+        # if self.cuesta_model:
+        #     # load audio file and compute hcqt
+        #     pump = create_pump_object()
+        #     features = compute_pump_features_from_mix(pump, mix.numpy())
+        #     input_hcqt = features['dphase/mag'][0]
+        #     input_dphase = features['dphase/dphase'][0]
+            
+        #     # reshape hcqt and dphase to be compatible with the model
+        #     hcqt = input_hcqt.transpose(2, 1, 0)
+        #     dphase = input_dphase.transpose(2, 1, 0)
+        
+        # if self.cuesta_model_trainable:
+        #     # load the model           
+        #     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        #     cuesta_model = models.F0Extractor(trained_cuesta=True, use_cuda=True)
+        #     cuesta_model = cuesta_model.eval()
+        #     cuesta_model = cuesta_model.to(device)
+            
+        #     salience_map = cuesta_model(mix[None, :])
+        #     energy_s0 = torch.sum(torch.square(salience_map))
+                        
+        if self.return_name: return mix, frequencies, sources, name, voices
+        # elif self.cuesta_model: return mix, frequencies, sources, hcqt, dphase
+        elif self.cuesta_model and not self.cuesta_model_trainable: return mix, frequencies, sources
+        # elif self.cuesta_model and self.cuesta_model_trainable: return mix, frequencies, sources, energy_s0.detach().cpu()
+        elif self.cuesta_model_trainable: return mix, frequencies, sources
+        else: return mix, frequencies, sources
+        
+        
+        
+class CantoriaDataSets(torch.utils.data.Dataset):
+
+    def __init__(self, 
+                 song_name: str,
+                 conf_threshold=0.4, 
+                 example_length=64000, 
+                 allowed_voices='satb',
+                 return_name=False, 
+                 n_sources=2, 
+                 random_mixes=False, 
+                 f0_from_mix=True, 
+                 cunet_original=False, 
+                 one_song=False,
+                 cuesta_model=False, 
+                 cuesta_model_trainable=False,
+                 ):
+
+        super().__init__()
+
+        self.song_name = song_name
+        self.conf_threshold = conf_threshold
+        self.example_length = example_length
+        self.allowed_voices = allowed_voices
+        self.return_name = return_name
+        self.n_sources = n_sources
+        self.random_mixes = random_mixes
+        self.f0_from_mix = f0_from_mix
+        self.sample_rate = 16000
+        self.cunet_original = cunet_original # if True, add 2 f0 values at start and end to match frame number in U-Net
+        self.one_song = one_song
+        self.cuesta_model = cuesta_model
+        self.cuesta_model_trainable = cuesta_model_trainable
+
+        assert n_sources <= len(allowed_voices), 'number of sources ({}) is higher than ' \
+                                                 'allowed voiced to sample from ({})'.format(n_sources, len(allowed_voices))
+        voices_dict = {'s': 0, 'a': 1, 't': 2, 'b': 3}
+        self.voice_choices = [voices_dict[v] for v in allowed_voices]
+        self.voice_ids = ['s', 'a', 't', 'b']
+
+        if song_name == 'EJB1': self.total_audio_length = 300
+        elif song_name == 'CEA': self.total_audio_length = 119
+        elif song_name == 'EJB2': self.total_audio_length = 57
+        
+        self.audio_files = sorted(glob.glob('./Datasets/CantoriaDataset/{}/audio_16kHz/*.wav'.format(song_name)))
+        self.crepe_dir = './Datasets/CantoriaDataset/{}/crepe_f0_center'.format(song_name)
+
+        self.f0_cuesta_dir = './Datasets/CantoriaDataset/{}/mixtures_{}_sources/mf0_cuesta_processed'.format(song_name, n_sources)
+        
+        if not random_mixes:
+            # number of non-overlapping excerpts
+            n_excerpts = self.total_audio_length * self.sample_rate // self.example_length
+            excerpt_idx = [i for i in range(n_excerpts)]
+
+            # possible combinations of the SATB voices
+            voice_combinations = list(itertools.combinations(self.voice_choices, r=n_sources))
+
+            # make list of all possible combinations
+            self.examples = list(itertools.product(excerpt_idx, voice_combinations))
+            self.n_examples = len(self.examples)
+
+
+    def __len__(self):
+        return self.n_examples
+
+    def __getitem__(self, idx):
+
+        if self.random_mixes:
+            # sample as many voices as specified by n_sources
+            if self.n_sources == 4:
+                voice_indices = torch.tensor([0, 1, 2, 3])
+            elif self.n_sources < 4:
+                # sample voice indices from [0, 3] without replacement
+                probabilities = torch.zeros((4,))
+                for i in self.voice_choices: probabilities[i] = 1
+                voice_indices = torch.multinomial(probabilities, num_samples=self.n_sources, replacement=False)
+                voice_indices = sorted(voice_indices.tolist())
+            else:
+                raise ValueError("Number of sources must be in [1, 4] but got {}.".format(self.n_sources))
+
+            # sample a number of singer_nbs with replacement
+            probabilities = torch.ones((4,))
+
+            # sample audio start time in seconds
+            audio_start_seconds = torch.rand((1,)) * (self.total_audio_length-self.example_length/self.sample_rate)
+        
+        else:
+            # deterministic set of examples
+            # tuple of example parameters (audio excerpt id, (tuple of voices), (tuple of singer ids))
+            params = self.examples[idx]
+
+            excerpt_idx, voice_indices = params
+            audio_start_seconds = excerpt_idx * self.example_length / self.sample_rate
+
+        # make sure the audio start time corresponds to a frame for which f0 was estimates with CREPE
+        audio_start_time = audio_start_seconds // 0.016 * 256 / self.sample_rate # seconds // crepe_hop_size [s]  * crepe_hop_size [samples] / sample_rate
+        audio_length = self.example_length // 256 * 256 / self.sample_rate  # length in seconds
+        crepe_start_frame = int(audio_start_time/0.016)
+        crepe_end_frame = crepe_start_frame + int(audio_length / 0.016)
+
+        if self.cunet_original:
+            crepe_start_frame -= 2
+            crepe_end_frame += 2
+
+        # load files (or just the required duration)
+        sources_list = []
+        f0_list = []
+        name = self.song_name  + '_'
+
+        for n in range(self.n_sources):
+
+            voice = self.voice_ids[voice_indices[n]]
+            voice = '_' + voice
+
+            audio_file = audio_file = [f for f in self.audio_files if voice in f][0]
+
+            audio = utils.load_audio(audio_file, start=audio_start_time, dur=audio_length)[0, :]
+
+            sources_list.append(audio)
+
+            file_name = audio_file.split('/')[-1][:-4]
+
+            if not self.f0_from_mix:
+                confidence_file = '{}/{}_confidence.npy'.format(self.crepe_dir, file_name)
+                confidence = np.load(confidence_file)[crepe_start_frame:crepe_end_frame]
+                f0_file = '{}/{}_frequency.npy'.format(self.crepe_dir, file_name)
+                frequency = np.load(f0_file)[crepe_start_frame:crepe_end_frame]
+                frequency = np.where(confidence < self.conf_threshold, 0, frequency)
+
+                frequency = torch.from_numpy(frequency).type(torch.float32)
+                f0_list.append(frequency)
+                
+                # move to solve the frequency reference problem
+                if not self.cunet_original:
+                    assert len(audio) / 256 == len(frequency), 'audio and frequency lengths are inconsistent'
+                
+            name += voice[1]
+
+
+        sources = torch.stack(sources_list, dim=1)  # [n_samples, n_sources]
+
+        if self.f0_from_mix:
+            f0_from_mix_file = self.f0_cuesta_dir + '/' + 'Cantoria_' + name + '.pt'
+            f0_estimates = torch.load(f0_from_mix_file)[crepe_start_frame:crepe_end_frame, :]
+            frequencies = f0_estimates
+        else:
+            frequencies = torch.stack(f0_list, dim=1)  # [n_frames, n_sources]
+
+        name += '_{}'.format(np.round(audio_start_time, decimals=3))
+
+        # mix and normalize
+        mix = torch.sum(sources, dim=1)  # [n_samples]
+        mix_max = mix.abs().max()
+        mix = mix / mix_max
+        sources = sources / mix_max  # [n_samples, n_sources]
+
+        voices = ''.join(['satb'[x] for x in voice_indices])
+                        
         # if self.cuesta_model:
         #     # load audio file and compute hcqt
         #     pump = create_pump_object()
