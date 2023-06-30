@@ -32,6 +32,7 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
     loss_reconstruction_container = utils.AverageMeter()
     loss_comittment_container = utils.AverageMeter()
     loss_f0_container = utils.AverageMeter()
+    loss_1voice_per_salience_container = utils.AverageMeter()
     
     # Set full network in train mode or eval mode
     network.train()
@@ -79,7 +80,7 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
                 # f0 = torch.zeros_like(f0).to(device)
                 
                 if args.cuesta_model_trainable:
-                    if args.method == 'reconstruction':
+                    if args.method == 'reconstruction' or args.method == 'ste':
                         y_hat, sources, salience_maps, assignements, assignements_rec, f0_network = network(x, f0)
                     else:
                         y_hat, sources, salience_maps, assignements, f0_network = network(x, f0)
@@ -97,8 +98,10 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
                     #     plt.close()
                     
                 else:                    
-                    # y_hat, sources = network(x, f0, hcqt, dphase)
-                    y_hat, sources = network(x, f0)
+                    if args.method == 'reconstruction' or args.method == 'ste':
+                        y_hat, sources, salience_maps, assignements, assignements_rec, f0_network = network(x, f0)
+                    else:
+                        y_hat, sources, salience_maps, assignements, f0_network = network(x, f0)
             else:
                 y_hat, sources = network(x, f0)
         else:
@@ -134,18 +137,24 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         
         if args.loss_saliences_weight > 0:
             loss_salience_fn = torch.nn.MSELoss()
-            loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * args.loss_saliences_weight
+            loss_salience = loss_salience_fn(assignements.sum(dim=1), salience_maps[:,0,:,:].detach()) * args.loss_saliences_weight
             loss += loss_salience
             
         if args.loss_voices_weight > 0:
             loss_voices_fn = torch.nn.MSELoss()
-            loss_voices = loss_voices_fn(assignements * masks_batch, assignements) * args.loss_voices_weight
+            loss_voices = loss_voices_fn(assignements, (assignements * masks_batch).detach()) * args.loss_voices_weight
             loss += loss_voices
             
         if args.loss_comittment_weight > 0:
             comittment_loss_fn = torch.nn.MSELoss()
-            loss_comittment = comittment_loss_fn(assignements, assignements_rec) * args.loss_comittment_weight
-            loss += loss_comittment
+            loss_comittment = comittment_loss_fn(assignements, assignements_rec.detach()) * args.loss_comittment_weight
+            # loss_comittment1 = comittment_loss_fn(assignements_rec, assignements.detach())
+            loss = loss + loss_comittment
+        
+        if args.loss_1voice_per_salience_weight > 0:
+            loss_1voice_per_salience_fn = torch.nn.MSELoss()
+            loss_1voice_per_salience = loss_1voice_per_salience_fn(assignements, assignements_rec.detach()) * args.loss_1voice_per_salience_weight
+            loss += loss_1voice_per_salience
             
         if args.loss_f0_weight > 0:
             f0_network = f0_network.reshape(f0.shape)
@@ -155,6 +164,10 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             # loss += loss_f0
         
         loss.backward()
+        
+        # Test d'un clip des gradients - vérifier l'implementation - Comment choisir la norm du gradient ?
+        # torch.nn.utils.clip_grad_norm_(network.parameters(), max_norm=1000, norm_type=2)
+        
         optimizer.step()
         loss_container.update(loss.item(), f0.size(0))
         if args.loss_saliences_weight > 0: loss_salience_container.update(loss_salience.item(), f0.size(0))  
@@ -162,6 +175,7 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
         if args.reconstruction_loss_weight > 0: loss_reconstruction_container.update(reconstruction_loss.item(), f0.size(0))
         if args.loss_comittment_weight > 0: loss_comittment_container.update(loss_comittment.item(), f0.size(0))
         if args.loss_f0_weight > 0: loss_f0_container.update(loss_f0.item(), f0.size(0))
+        if args.loss_1voice_per_salience_weight > 0: loss_1voice_per_salience_container.update(loss_1voice_per_salience.item(), f0.size(0))
     
     # log audio to tensorboard
     if network.return_sources == True:
@@ -177,6 +191,80 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             writer.add_audio(f'train/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
             writer.add_audio(f'train/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
     
+        if args.cuesta_model:
+            # log assign salience to tensorboard
+            assigned_saliences_figure, axs = plt.subplots(4, args.n_sources, figsize=(12, 8))
+            salience_maps_figure, axs1 = plt.subplots(1, 4, figsize=(12, 4))
+            for idx_batch in range(4):
+                for idx_source in range(4):
+                    axs[idx_batch, idx_source].imshow(assignements[idx_batch, idx_source].detach().cpu().numpy(), aspect='auto', origin='lower', cmap='magma')
+                axs1[idx_batch].imshow(salience_maps[idx_batch, 0].detach().cpu().numpy(), aspect='auto', origin='lower', cmap='magma')
+                
+            writer.add_figure('train/assigned_saliences', assigned_saliences_figure, epoch)
+            writer.add_figure('train/saliences_maps', salience_maps_figure, epoch)
+            writer.close()
+        
+        # log gradient to tensorboard
+        grads = [
+            param.grad.detach().flatten()
+            for param in network.parameters()
+            if param.grad is not None
+        ]
+        if len(grads) != 0:
+            mean = torch.cat(grads).norm(2)
+            writer.add_scalar('gradient_of_model', mean, epoch)
+        
+        grads = [
+            param.grad.detach().flatten()
+            for param in network.encoder.parameters()
+            if param.grad is not None
+        ]
+        if len(grads) != 0:
+            mean = torch.cat(grads).norm(2)
+            writer.add_scalar('gradient_of_model/encoder', mean, epoch)
+        
+        grads = [
+            param.grad.detach().flatten()
+            for param in network.decoder.parameters()
+            if param.grad is not None
+        ]
+        if len(grads) != 0:
+            mean = torch.cat(grads).norm(2)
+            writer.add_scalar('gradient_of_model/decoder', mean, epoch)
+            writer.close()
+        
+        grads = [
+            param.grad.detach().flatten()
+            for param in network.dense_outs.parameters()
+            if param.grad is not None
+        ]
+        if len(grads) != 0:
+            mean = torch.cat(grads).norm(2)
+            writer.add_scalar('gradient_of_model/dense_outs', mean, epoch)
+            writer.close()
+        
+        grads = [
+            param.grad.detach().flatten()
+            for param in network.gru_noise_mag.parameters()
+            if param.grad is not None
+        ]
+        if len(grads) != 0:
+            mean = torch.cat(grads).norm(2)
+            writer.add_scalar('gradient_of_model/gru_noise_mag', mean, epoch)
+            writer.close()
+            
+        if args.cuesta_model:
+            grads = [
+                param.grad.detach().flatten()
+                for param in network.F0Assigner.parameters()
+                if param.grad is not None
+            ]
+            if len(grads) != 0:
+                # print('F0Assigner_grads min:', torch.cat(grads).min(), 'F0Assigner_grads max:', torch.cat(grads).max(), '\n')
+                mean = torch.cat(grads).norm(2)
+                writer.add_scalar('gradient_of_model/F0Assigner', mean, epoch)
+                writer.close()
+    
     if args.reconstruction_loss_weight > 0:
         writer.add_scalar('Training_cost/loss_reconstruction', loss_reconstruction_container.avg, global_step=epoch)
     if args.loss_saliences_weight > 0:
@@ -188,6 +276,8 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
     
     if args.loss_f0_weight > 0:
         writer.add_scalar('Training_cost/loss_f0', loss_f0_container.avg, global_step=epoch)
+    if args.loss_1voice_per_salience_weight > 0:
+        writer.add_scalar('Training_cost/loss_1voice_per_salience', loss_1voice_per_salience_container.avg, global_step=epoch)
     
     return loss_container.avg
 
@@ -201,6 +291,7 @@ def valid(args, network, device, valid_sampler, epoch, writer):
     loss_reconstruction_container = utils.AverageMeter()
     loss_comittment_container = utils.AverageMeter()
     loss_f0_container = utils.AverageMeter()
+    loss_1voice_per_salience_container = utils.AverageMeter()
     
     # Set full network in eval mode
     network.eval()
@@ -210,7 +301,6 @@ def valid(args, network, device, valid_sampler, epoch, writer):
     if args.supervised: network.return_sources = True
     
     if args.loss_voices_weight > 0:
-        # Create masks to force the model to assign each voice to a different source
         masks_batch = utils.get_training_masks(batch_mask_shape=(args.batch_size, args.n_sources, 360, 344), 
                                         freq_bands=[(179, 285), (152, 260), (129, 225), (88, 189)], 
                                         device=device)
@@ -239,17 +329,18 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                     
                     if args.cuesta_model_trainable:
                         
-                        if args.method == 'reconstruction':
+                        if args.method == 'reconstruction' or args.method == 'ste':
                             y_hat, sources, salience_maps, assignements, assignements_rec, f0_network = network(x, f0)
                         
                         else:
                             # y_hat, sources, salience_maps, salience_maps_reconstruct = network(x, f0)
                             y_hat, sources, salience_maps, assignements, f0_network = network(x, f0)
                         
-                    else:
-                        # y_hat, sources = network(x, f0, hcqt, dphase)
-                        # y_hat, sources, salience_maps, salience_maps_reconstruct  = network(x, f0)
-                        y_hat, sources = network(x, f0)
+                    else:             
+                        if args.method == 'reconstruction' or args.method == 'ste':
+                            y_hat, sources, salience_maps, assignements, assignements_rec, f0_network = network(x, f0)
+                        else:
+                            y_hat, sources, salience_maps, assignements, f0_network = network(x, f0)
 
                 else:
                     y_hat, sources = network(x, f0)
@@ -276,18 +367,27 @@ def valid(args, network, device, valid_sampler, epoch, writer):
             
             if args.loss_saliences_weight > 0:
                 loss_salience_fn = torch.nn.MSELoss()
-                loss_salience = loss_salience_fn(salience_maps, assignements.sum(dim=1)[:,None,:,:]) * args.loss_saliences_weight
-                # loss += loss_salience
+                loss_salience = loss_salience_fn(assignements.sum(dim=1), salience_maps[:,0,:,:].detach()) * args.loss_saliences_weight
+                if args.reconstruction_loss_weight == 0:
+                    loss += loss_salience
             
             if args.loss_voices_weight > 0:
                 loss_voices_fn = torch.nn.MSELoss()
-                loss_voices = loss_voices_fn(assignements * masks_batch, assignements) * args.loss_voices_weight
-                # loss += loss_voices
+                loss_voices = loss_voices_fn(assignements, (assignements * masks_batch).detach()) * args.loss_voices_weight
+                if args.reconstruction_loss_weight == 0:
+                    loss += loss_voices
                 
             if args.loss_comittment_weight > 0:
                 comittment_loss_fn = torch.nn.MSELoss()
-                loss_comittment = comittment_loss_fn(assignements, assignements_rec) * args.loss_comittment_weight
-                # loss += loss_comittment
+                loss_comittment = comittment_loss_fn(assignements, assignements_rec.detach()) * args.loss_comittment_weight
+                # loss_comittment1 = comittment_loss_fn(assignements_rec, assignements.detach())
+                if args.reconstruction_loss_weight == 0:
+                    loss += loss_comittment
+                
+            if args.loss_1voice_per_salience_weight > 0:
+                loss_1voice_per_salience_fn = torch.nn.MSELoss()
+                loss_1voice_per_salience = loss_1voice_per_salience_fn(assignements, assignements_rec) * args.loss_1voice_per_salience_weight
+                # loss += loss_1voice_per_salience
             
             if args.loss_f0_weight > 0:
                 f0_network = f0_network.reshape(f0.shape)
@@ -302,6 +402,7 @@ def valid(args, network, device, valid_sampler, epoch, writer):
             if args.reconstruction_loss_weight > 0: loss_reconstruction_container.update(reconstruction_loss.item(), f0.size(0))
             if args.loss_comittment_weight > 0: loss_comittment_container.update(loss_comittment.item(), f0.size(0))
             if args.loss_f0_weight > 0: loss_f0_container.update(loss_f0.item(), f0.size(0))
+            if args.loss_1voice_per_salience_weight > 0: loss_1voice_per_salience_container.update(loss_1voice_per_salience.item(), f0.size(0))
         
         # end for loop
         # log audio to tensorboard
@@ -330,6 +431,21 @@ def valid(args, network, device, valid_sampler, epoch, writer):
         
         if args.loss_f0_weight > 0:
             writer.add_scalar('Validation_cost/loss_f0', loss_f0_container.avg, global_step=epoch)
+        if args.loss_1voice_per_salience_weight > 0:
+            writer.add_scalar('Validation_cost/loss_1voice_per_salience', loss_1voice_per_salience_container.avg, global_step=epoch)
+        
+        if args.cuesta_model:
+            # log assign salience to tensorboard
+            assigned_saliences_figure, axs = plt.subplots(4, args.n_sources, figsize=(12, 8))
+            salience_maps_figure, axs1 = plt.subplots(1, 4, figsize=(12, 4))
+            for idx_batch in range(4):
+                for idx_source in range(4):
+                    axs[idx_batch, idx_source].imshow(assignements[idx_batch, idx_source].detach().cpu().numpy(), aspect='auto', origin='lower', cmap='magma')
+                axs1[idx_batch].imshow(salience_maps[idx_batch, 0].detach().cpu().numpy(), aspect='auto', origin='lower', cmap='magma')
+                
+            writer.add_figure('valid/assigned_saliences', assigned_saliences_figure, epoch)
+            writer.add_figure('valid/saliences_maps', salience_maps_figure, epoch)
+            writer.close()
         
         return loss_container.avg
 
@@ -459,6 +575,7 @@ def main():
     parser.add_argument('--loss-voices-weight', type=float, default=0.0)
     parser.add_argument('--loss-comittment-weight', type=float, default=0.0)
     parser.add_argument('--loss-f0-weight', type=float, default=0.0)
+    parser.add_argument('--loss-1voice-per-salience-weight', type=float, default=0.0)
 
 
 
@@ -560,6 +677,10 @@ def main():
                        'voiced_noise_magnitudes': args.noise_mags_loss_weight,
                        }
 
+    ############################################################################################################################################################
+    # hard coded n_sources to 4 - Rajout pour faire marcher le code avec Cuesta et VA à utiliser 2 sources pour la data, mais générer 4 sources
+    # args.n_sources = 4
+    ############################################################################################################################################################
 
     train_args_dict = vars(args)
 
@@ -577,7 +698,7 @@ def main():
         if args.cuesta_model_trainable:
             model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
         else:
-            raise NotImplementedError
+            model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
             
         print('Cuesta_trainable:', model_to_train.cuesta_model_trainable)
         print('method:', model_to_train.method)
@@ -599,6 +720,13 @@ def main():
         weight_decay=args.weight_decay
     )
 
+    if args.wst_model == 'warmup' or args.wst_model == 'warmup_F0_after_warmup_synth_BCBQ':
+        optimizer = torch.optim.Adam(
+            model_to_train.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay
+        )
+    
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 200, gamma=args.lr_decay_gamma)
 
     es = utils.EarlyStopping(patience=args.patience)
