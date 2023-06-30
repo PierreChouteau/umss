@@ -424,7 +424,8 @@ class mf0Extract_from_salience():
         alto = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 1, :, :])                
         tenor = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 2, :, :])                
         bass = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 3, :, :])
-        
+
+        #------ 1- Ste puis multiplication --------------# 
         # STE pour obtenir les amplitude binarisées à la place du soft threshold
         sop = StraightThroughEstimator(thresh=self.thresh[0])(sop)
         alto = StraightThroughEstimator(thresh=self.thresh[1])(alto)
@@ -439,10 +440,32 @@ class mf0Extract_from_salience():
         f0_alto = alto[:, 0, :] * torch.from_numpy(mf0[:, :, 2]).to(assigned_saliences.device)
         f0_tenor = tenor[:, 0, :] * torch.from_numpy(mf0[:, :, 3]).to(assigned_saliences.device)
         f0_bass = bass[:, 0, :] * torch.from_numpy(mf0[:, :, 4]).to(assigned_saliences.device)
+                
+        #------ 2- Juste ste (car dans ste, on englobe binarisation et multiplication --------------# 
+        # mf0 = torch.from_numpy(mf0).to(assigned_saliences.device)
+                
+        # f0_sop = StraightThroughEstimator(thresh=self.thresh[0], mf0=mf0[:, :, 1])(sop[:, 0, :])
+        # f0_alto = StraightThroughEstimator(thresh=self.thresh[1], mf0=mf0[:, :, 2])(alto[:, 0, :])
+        # f0_tenor = StraightThroughEstimator(thresh=self.thresh[2], mf0=mf0[:, :, 3])(tenor[:, 0, :])
+        # f0_bass = StraightThroughEstimator(thresh=self.thresh[3], mf0=mf0[:, :, 4])(bass[:, 0, :])
         
         f0s = torch.stack((f0_sop, f0_alto, f0_tenor, f0_bass), dim=1) # [batch_size, n_sources, n_frames]
         
-        return f0s, None
+        
+        # Reconstruction des saliences assignées
+        assigned_salience_sop_rec, f0_bins_salience = data.mf0_assigned_to_salience_map_batch(mf0[:, :, 1], assigned_saliences.shape)
+        assigned_salience_alto_rec, _ = data.mf0_assigned_to_salience_map_batch(mf0[:, :, 2], assigned_saliences.shape)
+        assigned_salience_tenor_rec, _ = data.mf0_assigned_to_salience_map_batch(mf0[:, :, 3], assigned_saliences.shape)
+        assigned_salience_bass_rec, _ = data.mf0_assigned_to_salience_map_batch(mf0[:, :, 4], assigned_saliences.shape)
+                        
+        assigned_salience_rec = torch.stack((torch.from_numpy(assigned_salience_sop_rec.astype(np.float32)), 
+                                             torch.from_numpy(assigned_salience_alto_rec.astype(np.float32)), 
+                                             torch.from_numpy(assigned_salience_tenor_rec.astype(np.float32)), 
+                                             torch.from_numpy(assigned_salience_bass_rec.astype(np.float32))
+                                             ), 
+                                            dim=1).to(assigned_saliences.device)
+        
+        return f0s, assigned_salience_rec
         
         
     def amplitude(self, assigned_saliences):
@@ -485,12 +508,13 @@ class mf0Extract_from_salience():
         
         f0_bins_batch = torch.stack([torch.from_numpy(f0_bins_salience) for _ in range(assigned_salience_rec.size(1))], dim=1).to(assigned_saliences.device)
 
-        # Copy du gradient - eq à l'opération de Straight Through Estimator
-        assign_salience = assigned_saliences + (assigned_salience_rec - assigned_saliences).detach()
-        
         # Multiplication de la salience entière par l'axe des fréquences
-        assign_salience *= f0_bins_batch
+        assigned_salience_rec_f0 = assigned_salience_rec * f0_bins_batch
         
+        # Copy du gradient - eq à l'opération de Straight Through Estimator
+        assign_salience = assigned_saliences + (assigned_salience_rec_f0 - assigned_saliences).detach()
+        
+
         # Somme sur l'axe des fréquences pour trouver la bonne fréquence
         f0s = assign_salience.sum(dim=2)
         
@@ -531,7 +555,35 @@ class mf0Extract_from_salience():
         #     plt.close()
             
         return f0s, None
+        
+        
+    def threshold(self, assigned_saliences):
+        
+        # Extraction des amplitudes max à partir de saliences assignées
+        sop = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 0, :, :])   
+        alto = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 1, :, :])                
+        tenor = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 2, :, :])                
+        bass = nn.MaxPool2d(kernel_size=(360, 1))(assigned_saliences[:, 3, :, :])
+        
+        # Threshold operation
+        sop[sop < self.thresh[0]] = 0.
+        alto[alto < self.thresh[1]] = 0.
+        tenor[tenor < self.thresh[2]] = 0.
+        bass[bass < self.thresh[3]] = 0.
+        
+        # Extraction des f0s
+        mf0 = data.mf0_predict_batch(assigned_saliences.detach().cpu().numpy())
+        
+        # Multiplication par les fréquences exactes
+        f0_sop = sop[:, 0, :] * torch.from_numpy(mf0[:, :, 1]).to(assigned_saliences.device)
+        f0_alto = alto[:, 0, :] * torch.from_numpy(mf0[:, :, 2]).to(assigned_saliences.device)
+        f0_tenor = tenor[:, 0, :] * torch.from_numpy(mf0[:, :, 3]).to(assigned_saliences.device)
+        f0_bass = bass[:, 0, :] * torch.from_numpy(mf0[:, :, 4]).to(assigned_saliences.device)
+        
+        f0s = torch.stack((f0_sop, f0_alto, f0_tenor, f0_bass), dim=1) # [batch_size, n_sources, n_frames]
             
+        return f0s, None
+    
             
     def forward(self, assigned_saliences):
         if self.method == 'sigmoid':
@@ -544,6 +596,8 @@ class mf0Extract_from_salience():
             return self.ste(assigned_saliences)
         elif self.method == 'softmax':
             return self.softmax(assigned_saliences)
+        elif self.method == 'threshold':
+            return self.threshold(assigned_saliences)
         else:
             raise ValueError('Unknown method: %s' % self.method)
 
@@ -557,7 +611,7 @@ class STEFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        return F.hardtanh(grad_output, -10, 10), None
+        return F.hardtanh(grad_output, -1000, 1000), None
     
     
 class StraightThroughEstimator(nn.Module):
@@ -568,6 +622,30 @@ class StraightThroughEstimator(nn.Module):
     def forward(self, x):
         x = STEFunction.apply(x, self.thresh)
         return x
+
+# Ste that takes into account the multiplication by mf0 and the trhesholding
+# class STEFunction(torch.autograd.Function):
+#     @staticmethod
+#     def forward(ctx, input, thresh, mf0):
+#         output = (input > thresh).float()
+#         if mf0 is not None:
+#             output *= mf0
+#         return output
+
+#     @staticmethod
+#     def backward(ctx, grad_output):
+#         return F.hardtanh(grad_output, -1000, 1000), None, None
+    
+    
+# class StraightThroughEstimator(nn.Module):
+#     def __init__(self, thresh, mf0=None):
+#         super(StraightThroughEstimator, self).__init__()
+#         self.thresh = thresh
+#         self.mf0 = mf0
+        
+#     def forward(self, x):
+#         x = STEFunction.apply(x, self.thresh, self.mf0)
+#         return x
     
     
 # class STEFunction(torch.autograd.Function):
@@ -737,7 +815,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                     
                 # From Saliences map to saliences assignment
                 assigned_saliences = self.F0Assigner(salience_maps) # .eval() to be sure that the model is in inference mode, we do not update batchnorm  
-                if masks is not None: assigned_saliences = assigned_saliences * masks; print('ATTENTION MASK') # Attention à cette ajout, c'était un simple test
+                if masks is not None: assigned_saliences = assigned_saliences * masks; # print('ATTENTION MASK') # Attention à cette ajout, c'était un simple test
                 
                 # from assigned salience to mf0s
                 mf0s, assigned_saliences_rec = self.mf0Extract_from_salience.forward(assigned_saliences) # [batch_size, n_sources, n_frames]
@@ -795,11 +873,24 @@ class SourceFilterMixtureAutoencoder2(_Model):
                             # print('fini')
                                 
             else: 
-            # saliences extraction and assignment are not trainable
-            # TODO: Implement f0 extraction and heuristic assignment 
-                raise NotImplementedError
-            
-
+                with torch.no_grad():
+                    # With Hcqt from Pytorch (nnAudio) - Salience_maps extraction
+                    salience_maps = self.F0Extractor(audio) # .eval() to be sure that the model is in inference mode, we do not update batchnorm        
+                    
+                    # From Saliences map to saliences assignment
+                    assigned_saliences = self.F0Assigner(salience_maps) # .eval() to be sure that the model is in inference mode, we do not update batchnorm  
+                    if masks is not None: assigned_saliences = assigned_saliences * masks; print('ATTENTION MASK') # Attention à cette ajout, c'était un simple test
+                    
+                    # from assigned salience to mf0s
+                    mf0s, assigned_saliences_rec = self.mf0Extract_from_salience.forward(assigned_saliences) # [batch_size, n_sources, n_frames]                  
+                    
+                    #--------- Transposition des f0s pour avoir la bonne dimension ---------------------#
+                    mf0s = mf0s.transpose(1, 2)  # [batch_size, n_frames, n_sources]
+                    f0_hz = mf0s
+                    
+                    #-------------- permet d'enlever les 0 qui font vriller le log derrière                
+                    f0_hz = f0_hz.clamp(min=1e-5)
+                
         z = self.encoder(audio, f0_hz)  # [batch_size, n_frames, n_sources, embedding_size], f0_hz, est un argument non utilisé dans l'encoder
 
         batch_size, n_frames, n_sources, embedding_size = z.shape
@@ -822,8 +913,6 @@ class SourceFilterMixtureAutoencoder2(_Model):
         z = z.permute(0, 2, 1, 3)
         z = z.reshape((batch_size*n_sources, n_frames, embedding_size))
 
-        # print(f0_hz)
-        # print(f0_hz.shape)
         x = self.decoder(f0_hz, z)
 
 
@@ -872,13 +961,15 @@ class SourceFilterMixtureAutoencoder2(_Model):
         if self.return_sources:
             if self.F0Extractor is not None:
                 if self.cuesta_model_trainable:
-                    if self.method == 'reconstruction':
+                    if self.method == 'reconstruction' or self.method == 'ste':
                         return mix, sources, salience_maps, assigned_saliences, assigned_saliences_rec, f0_hz
                     else:
                         return mix, sources, salience_maps, assigned_saliences, f0_hz
                 else:
-                    return mix, sources
-                    # return mix, sources, salience_maps, salience_maps_reconstruct
+                    if self.method == 'reconstruction' or self.method == 'ste':
+                        return mix, sources, salience_maps, assigned_saliences, assigned_saliences_rec, f0_hz
+                    else:
+                        return mix, sources, salience_maps, assigned_saliences, f0_hz
             else:
                 return mix, sources
         if self.return_lsf:
