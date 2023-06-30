@@ -18,7 +18,7 @@ import ddsp.spectral_ops
 from tqdm import tqdm
 import time
 
-from scipy.io import wavfile
+import soundfile as sf
 import mir_eval
 
 torch.manual_seed(0)
@@ -26,7 +26,7 @@ torch.manual_seed(0)
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--tag', type=str)
-parser.add_argument('--test-set', type=str, default='El Rossinyol', choices=['CSD', 'BCBQ'])
+parser.add_argument('--test-set', type=str, default='El Rossinyol', choices=['CSD', 'BCBQ', 'cantoria'])
 parser.add_argument('--f0-from-mix', action='store_true', default=False)
 parser.add_argument('--show-progress', action='store_true', default=False)
 parser.add_argument('--compute', type=str, default='all', choices=['all', 'all_mask', 'all_no_mask', 'sp_SNR','sp_SI-SNR','mel_cep_dist','SI-SDR_mask','sp_SNR_mask','sp_SI-SNR_mask','mel_cep_dist_mask', 'f0_infos'])
@@ -68,13 +68,14 @@ compute_f0 = 'f0_infos' in to_compute
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 trained_model, model_args = utils.load_model(tag, device, return_args=True)
 trained_model.return_synth_params = False
-trained_model.return_sources=True
+trained_model.return_sources = True
 voices = model_args['voices'] if 'voices' in model_args.keys() else 'satb'
 original_cunet = model_args['original_cu_net'] if 'original_cu_net' in model_args.keys() else False
 
 # Initialize results and results_masking path
 if args.test_set == 'CSD': test_set_add_on = 'CSD'
 elif args.test_set == 'BCBQ': test_set_add_on = 'BCBQ'
+elif args.test_set == 'cantoria': test_set_add_on = 'Cantoria'
 else: raise ValueError('Unknown test set')
 
 # Initialize add_on element to path to save results
@@ -83,14 +84,22 @@ else: f0_add_on = 'crepe'
 
 # Initialize path to save results
 path_to_save_results = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag, f0_add_on, test_set_add_on, device)
+# path_to_save_results = path_to_save_results + '_4_sources'
 if not os.path.isdir(path_to_save_results):
     os.makedirs(path_to_save_results, exist_ok=True)
 
 if is_u_net: path_to_save_results_masking = path_to_save_results
 else:
     path_to_save_results_masking = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag + '_masking', f0_add_on, test_set_add_on, device)
+    # path_to_save_results_masking = path_to_save_results_masking + '_4_sources'
     if not os.path.isdir(path_to_save_results_masking):
         os.makedirs(path_to_save_results_masking, exist_ok=True)
+
+
+#####################################################################################################################################################
+# Passage en 2sources pour un test model hard code
+# model_args['n_sources'] = 2
+#####################################################################################################################################################
 
 
 # Initialize test_set
@@ -119,8 +128,8 @@ elif args.test_set == 'BCBQ':
                             allowed_voices='satb',
                             f0_from_mix=f0_cuesta,
                             cunet_original=original_cunet,
-                            cuesta_model=model_args['cuesta_model'],
-                            cuesta_model_trainable=model_args['cuesta_model_trainable'])
+                            cuesta_model=False,
+                            cuesta_model_trainable=False)
 
     bq_val = data.BCBQDataSets(data_set='BQ',
                             validation_subset=True,
@@ -132,10 +141,41 @@ elif args.test_set == 'BCBQ':
                             allowed_voices='satb',
                             f0_from_mix=f0_cuesta,
                             cunet_original=original_cunet,
-                            cuesta_model=model_args['cuesta_model'],
-                            cuesta_model_trainable=model_args['cuesta_model_trainable'])
+                            cuesta_model=False,
+                            cuesta_model_trainable=False)
     
-    test_set = torch.utils.data.ConcatDataset([bc_val, bq_val])    
+    test_set = torch.utils.data.ConcatDataset([bc_val, bq_val])
+
+
+elif args.test_set == 'cantoria':
+    # TODO: Attention, implémentation non finie, il reste à drop les frames silencieuses
+    ejb1 = data.CantoriaDataSets(song_name='EJB1',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices='satb',
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+
+    ejb2 = data.CantoriaDataSets(song_name='EJB2',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices='satb',
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+
+    test_set = torch.utils.data.ConcatDataset([ejb1, ejb2])
 
 else: 
     raise ValueError('Unknown test set')
@@ -178,6 +218,10 @@ for i, energy in enumerate(energy_snippet["energy"]):
         for j in range(n_seeds):
             energy_to_drop.append(i + j * len(energy_snippet["energy"]))
 
+############################################################################################################################################################
+# Voice dict - Rajout pour faire marcher le code avec Cuesta et VA à utiliser 2 sources pour la data, mais générer 4 sources
+# voice_dict = {'s':0, 'a':1, 't':2, 'b':3}
+############################################################################################################################################################
 
 # Evaluation loop
 for seed in range(n_seeds):
@@ -197,6 +241,7 @@ for seed in range(n_seeds):
 
         mix = mix.unsqueeze(0)
         target_sources = target_sources.unsqueeze(0)
+        # test_source = torch.zeros_like(target_sources.transpose(1,2).to(device)) # A rajouter si besoin de changer le nombre de sources par rapport à l'entrainement du modèle.
         f0_hz = f0_hz[None, :, :]
 
         batch_size, n_samples, n_sources = target_sources.shape
@@ -220,8 +265,25 @@ for seed in range(n_seeds):
                 source_estimates_masking = source_estimates.reshape((batch_size * n_sources, n_samples))
 
             else:
-                if 'method' in model_args and model_args['method'] == 'reconstruction': mix_estimate, source_estimates, _, _, _, f0s = trained_model(mix, f0_hz)
+                if 'method' in model_args and model_args['method'] == 'reconstruction' or model_args['method'] == 'ste': mix_estimate, source_estimates, _, _, _, f0s = trained_model(mix, f0_hz)
                 else: mix_estimate, source_estimates, _, _, f0s = trained_model(mix, f0_hz)
+                
+                ###################################################################################################################################################################
+                # Rajout de code pour faire marcher le code avec Cuesta et VA à utiliser 2 sources pour la data, mais générer 4 sources, et évaluer que sur les 2 "bonnes sources"
+                # test_f0s = torch.zeros((n_sources, f0s.shape[1], batch_size)).to(device)
+                # test_f0s[0, :, :] = f0s[voice_dict[voices[0]], :, :]
+                # test_f0s[1, :, :] = f0s[voice_dict[voices[1]], :, :]
+                # test_f0s[2, :, :] = f0s[voice_dict[voices[2]], :, :] # suite pour 2sources to 4 sources
+                # test_f0s[3, :, :] = f0s[voice_dict[voices[3]], :, :] # suite pour 2sources to 4 sources
+                
+                # test_source[:,0,:] = source_estimates[:, voice_dict[voices[0]], :]
+                # test_source[:,1,:] = source_estimates[:, voice_dict[voices[1]], :]
+                # test_source[:,2,:] = source_estimates[:, voice_dict[voices[2]], :] # suite pour 2sources to 4 sources
+                # test_source[:,3,:] = source_estimates[:, voice_dict[voices[3]], :] # suite pour 2sources to 4 sources
+                
+                # source_estimates = test_source
+                # f0s = test_f0s
+                ####################################################################################################################################################################
                 
                 # [batch_size * n_sources, n_samples]
                 source_estimates_masking = utils.masking_from_synth_signals_torch(mix, source_estimates, n_fft=2048, n_hop=256)
@@ -231,6 +293,23 @@ for seed in range(n_seeds):
             target_sources = target_sources.reshape((batch_size * n_sources, n_samples))
             source_estimates = source_estimates.reshape((batch_size * n_sources, n_samples))
 
+            # Export source estimates as wav files with sounfiles
+            export_sources = True
+            if export_sources:
+                for i in range(batch_size):
+                    for j in range(n_sources):
+                        if not os.path.isdir(path_to_save_results_masking + '/sources_estimates_masking/'): os.makedirs(path_to_save_results_masking + '/sources_estimates_masking/', exist_ok=True)
+                        sf.write(path_to_save_results_masking + '/sources_estimates_masking' + f'/sources_estimates_masking_{name}_voice_{voices[j]}.wav', source_export[i, j].cpu().numpy(), 16000)
+                        
+                        if not os.path.isdir(path_to_save_results_masking + '/sources_estimates'): os.makedirs(path_to_save_results_masking + '/sources_estimates/', exist_ok=True)
+                        sf.write(path_to_save_results_masking + '/sources_estimates' + f'/sources_estimates_{name}_voice_{voices[j]}.wav', source_estimates[j].cpu().numpy(), 16000)
+                        
+                        if not os.path.isdir(path_to_save_results_masking + '/target_sources'): os.makedirs(path_to_save_results_masking + '/target_sources/', exist_ok=True)
+                        sf.write(path_to_save_results_masking + '/target_sources' + f'/target_sources_{name}_voice_{voices[j]}.wav', target_sources[j].cpu().numpy(), 16000)
+                    
+                
+            
+            
             # compute metrics for f0s
             if compute_f0:
 
@@ -239,6 +318,8 @@ for seed in range(n_seeds):
                 overall_accuracies = np.zeros((batch_size, n_sources, n_eval_frames))
                 raw_pitches_accuracies = np.zeros((batch_size, n_sources, n_eval_frames))
                 raw_chroma_accuracies = np.zeros((batch_size, n_sources, n_eval_frames))
+                voicing_false_alarm_rates = np.zeros((batch_size, n_sources, n_eval_frames))
+                voicing_recall_rates = np.zeros((batch_size, n_sources, n_eval_frames))
                 f_scores = np.zeros((batch_size, n_sources, n_eval_frames))
                 
                 for source in range(n_sources):
@@ -257,6 +338,10 @@ for seed in range(n_seeds):
                                                                                                   est_v, est_c)
                         
                         raw_chroma_accuracies[0, source, n] = mir_eval.melody.raw_chroma_accuracy(ref_v, ref_c, est_v, est_c)
+                        
+                        voicing_recall_rates[0, source, n] = mir_eval.melody.voicing_recall(ref_v, est_v)
+                        
+                        voicing_false_alarm_rates[0, source, n] = mir_eval.melody.voicing_false_alarm(ref_v, est_v)
                         
                         metrics = mir_eval.multipitch.metrics(ref_time, ref_freq[:, None]+20, ref_time, est_freq[:, None]+20, min_freq=0)
                         precision, recall, accuracy = metrics[0:3]
@@ -338,6 +423,12 @@ for seed in range(n_seeds):
                 f_score_results = [f_scores[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
                 batch_results_masking_dict['F-Score'] = f_score_results
             
+                voicing_false_alarm_results = [voicing_false_alarm_rates[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
+                batch_results_masking_dict['Voicing-False-Alarm'] = voicing_false_alarm_results
+            
+                voicing_recall_results = [voicing_recall_rates[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
+                batch_results_masking_dict['Voicing-Recall'] = voicing_recall_results            
+            
             batch_results_masking = pd.DataFrame(batch_results_masking_dict)
             eval_results_masking = eval_results_masking.append(batch_results_masking, ignore_index=True)
 
@@ -368,6 +459,12 @@ for seed in range(n_seeds):
                 f_scores_restults = [f_scores[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
                 batch_results_dict['F-Score'] = f_scores_restults
 
+                voicing_false_alarm_results = [voicing_false_alarm_rates[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
+                batch_results_dict['Voicing-False-Alarm'] = voicing_false_alarm_results
+            
+                voicing_recall_results = [voicing_recall_rates[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
+                batch_results_dict['Voicing-Recall'] = voicing_recall_results      
+
             batch_results = pd.DataFrame(batch_results_dict)
             eval_results = eval_results.append(batch_results, ignore_index=True)
 
@@ -394,7 +491,9 @@ if compute_results:
     if compute_mel_cep_dist:
         print('mel cepstral distance', 'mean', means['mel_cep_dist'], 'median', medians['mel_cep_dist'], 'std', stds['mel_cep_dist'])
     if compute_f0:
-        print('\n'+'f0 Raw Pitch Accuracy:', 'mean', means['Raw-Pitch-Accuracy'], 'median', medians['Raw-Pitch-Accuracy'], 'std', stds['Raw-Pitch-Accuracy'])
+        print('\n'+'Voicing Recall:', 'mean', means['Voicing-Recall'], 'median', medians['Voicing-Recall'], 'std', stds['Voicing-Recall'])
+        print('Voicing False Alarm:', 'mean', means['Voicing-False-Alarm'], 'median', medians['Voicing-False-Alarm'], 'std', stds['Voicing-False-Alarm'])
+        print('f0 Raw Pitch Accuracy:', 'mean', means['Raw-Pitch-Accuracy'], 'median', medians['Raw-Pitch-Accuracy'], 'std', stds['Raw-Pitch-Accuracy'])
         print('f0 Overall Accuracy:', 'mean', means['Overall-Accuracy'], 'median', medians['Overall-Accuracy'], 'std', stds['Overall-Accuracy'])
         print('f0 Raw Chroma Accuracy:', 'mean', means['Raw-Chroma-Accuracy'], 'median', medians['Raw-Chroma-Accuracy'], 'std', stds['Raw-Chroma-Accuracy'])
         print('f0 F-Score:', 'mean', means['F-Score'], 'median', medians['F-Score'], 'std', stds['F-Score'])
@@ -424,8 +523,10 @@ if compute_results_masking:
     if compute_mel_cep_dist_mask:    
         print('mel cepstral distance:', 'mean', means_masking['mel_cep_dist'], 'median', medians_masking['mel_cep_dist'], 'std', stds_masking['mel_cep_dist'])
     if compute_f0:
-        print('\n'+'f0 Raw Pitch Accuracy:', 'mean', means_masking['Raw-Pitch-Accuracy'], 'median', medians_masking['Raw-Pitch-Accuracy'], 'std', stds_masking['Raw-Pitch-Accuracy'])
-        print('f0 Overall Accuracy:', 'mean', means_masking['Overall-Accuracy'], 'median', medians_masking['Overall-Accuracy'], 'std', stds_masking['Overall-Accuracy'])
+        print('\n'+'Voicing Recall:', 'mean', means['Voicing-Recall'], 'median', medians['Voicing-Recall'], 'std', stds['Voicing-Recall'])
+        print('Voicing False Alarm:', 'mean', means['Voicing-False-Alarm'], 'median', medians['Voicing-False-Alarm'], 'std', stds['Voicing-False-Alarm'])
+        print('f0 Raw Pitch Accuracy:', 'mean', means['Raw-Pitch-Accuracy'], 'median', medians['Raw-Pitch-Accuracy'], 'std', stds['Raw-Pitch-Accuracy'])
+        print('f0 Overall Accuracy:', 'mean', means['Overall-Accuracy'], 'median', medians['Overall-Accuracy'], 'std', stds['Overall-Accuracy'])
         print('f0 Raw Chroma Accuracy:', 'mean', means['Raw-Chroma-Accuracy'], 'median', medians['Raw-Chroma-Accuracy'], 'std', stds['Raw-Chroma-Accuracy'])
         print('f0 F-Score:', 'mean', means['F-Score'], 'median', medians['F-Score'], 'std', stds['F-Score'])
     print("-----------------------" + "\n")
