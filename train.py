@@ -13,6 +13,7 @@ import os
 import copy
 import configargparse
 import shutil
+from torchsummary import summary
 
 import matplotlib.pyplot as plt
 
@@ -24,6 +25,9 @@ from ddsp import losses
 tqdm.monitor_interval = 0
 
 def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoch, writer):
+    
+# TODO: FAIRE ATTENTION A LA LOSS DE LA SALIENCE QUE JE RENVOI......    
+
     loss_container = utils.AverageMeter()
     network.train()
     if args.loss_lsf_weight > 0: network.return_lsf = True
@@ -77,9 +81,10 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
                     #                 print(col)
                 else:                    
                     # y_hat, sources = network(x, f0, hcqt, dphase)
-                    y_hat, sources, salience_maps, salience_maps_reconstruct  = network(x, f0)
+                    # y_hat, sources, salience_maps, salience_maps_reconstruct  = network(x, f0)
+                    y_hat, sources, _  = network(x, f0)
             else:
-                y_hat, sources = network(x, f0)
+                y_hat, sources, _ = network(x, f0)
         else:
             y_hat = network(x, f0)
 
@@ -143,15 +148,16 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
             writer.add_audio(f'train/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
     
     
-    plt.imshow(salience_maps_reconstruct.detach().cpu()[0][0], aspect='auto', origin='lower')
-    plt.colorbar()
-    plt.savefig('test_fig/assignement_prob/salience_map_reconstruct_train_assignement_prob.png')
-    plt.close()
-    
-    plt.imshow(salience_maps.detach().cpu()[0][0], aspect='auto', origin='lower')
-    plt.colorbar()
-    plt.savefig('test_fig/assignement_prob/salience_map_train_assignement_prob.png')
-    plt.close()    
+    if network.F0Extractor is not None:
+        plt.imshow(salience_maps_reconstruct.detach().cpu()[0][0], aspect='auto', origin='lower')
+        plt.colorbar()
+        plt.savefig('test_fig/assignement_prob/salience_map_reconstruct_train_assignement_prob.png')
+        plt.close()
+        
+        plt.imshow(salience_maps.detach().cpu()[0][0], aspect='auto', origin='lower')
+        plt.colorbar()
+        plt.savefig('test_fig/assignement_prob/salience_map_train_assignement_prob.png')
+        plt.close()    
     
     return loss_container.avg
 
@@ -200,10 +206,11 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                         
                     else:
                         # y_hat, sources = network(x, f0, hcqt, dphase)
-                        y_hat, sources, salience_maps, salience_maps_reconstruct  = network(x, f0)
+                        # y_hat, sources, salience_maps, salience_maps_reconstruct  = network(x, f0)
+                        y_hat, sources, _  = network(x, f0)
 
                 else:
-                    y_hat, sources = network(x, f0)
+                    y_hat, sources, _ = network(x, f0)
             else:
                 y_hat = network(x, f0)
 
@@ -252,16 +259,16 @@ def valid(args, network, device, valid_sampler, epoch, writer):
                 writer.add_audio(f'valid/generated_sources/source_{n_sources}', sources[0][n_sources] / torch.max(torch.abs(sources[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)
                 writer.add_audio(f'valid/mask_sources/source_{n_sources}', source_estimates_masking[0][n_sources] / torch.max(torch.abs(source_estimates_masking[0][n_sources])), global_step=epoch-1, sample_rate=args.samplerate)    
 
-        
-        plt.imshow(salience_maps_reconstruct.detach().cpu()[0][0], aspect='auto', origin='lower')
-        plt.colorbar()
-        plt.savefig('test_fig/assignement_prob/salience_map_reconstruct_valid_assignement_prob.png')
-        plt.close()
-        
-        plt.imshow(salience_maps.detach().cpu()[0][0], aspect='auto', origin='lower')
-        plt.colorbar()
-        plt.savefig('test_fig/assignement_prob/salience_map_valid_assignement_prob.png')
-        plt.close()    
+        if network.F0Extractor is not None:
+            plt.imshow(salience_maps_reconstruct.detach().cpu()[0][0], aspect='auto', origin='lower')
+            plt.colorbar()
+            plt.savefig('test_fig/assignement_prob/salience_map_reconstruct_valid_assignement_prob.png')
+            plt.close()
+            
+            plt.imshow(salience_maps.detach().cpu()[0][0], aspect='auto', origin='lower')
+            plt.colorbar()
+            plt.savefig('test_fig/assignement_prob/salience_map_valid_assignement_prob.png')
+            plt.close()    
         
         return loss_container.avg
 
@@ -319,7 +326,6 @@ def get_statistics(args, dataset):
 
 
 def main():
-    torch.multiprocessing.set_start_method('spawn')
     parser = configargparse.ArgParser()
     parser.add('-c', '--my-config', required=False, is_config_file=True, help='config file path', default='config.txt')
     #parser = argparse.ArgumentParser(description='Training')
@@ -514,6 +520,10 @@ def main():
     # print(model_to_train.state_dict()['F0Extractor.base_model1.4.bias'])
 
     model_to_train.to(device)
+    
+    # print the number of parameters of the model
+    # print(model_to_train)
+    # print('Number of parameters: ', sum(p.numel() for p in model_to_train.parameters() if p.requires_grad))
 
     optimizer = torch.optim.Adam(
         model_to_train.parameters(),
@@ -583,7 +593,7 @@ def main():
         
         # train for another epochs_trained
         t = tqdm.trange(
-            results['epochs_trained'],
+            results['epochs_trained'] + 1,
             results['epochs_trained'] + args.epochs + 1,
             disable=args.quiet
         )

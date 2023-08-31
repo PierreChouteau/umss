@@ -26,7 +26,7 @@ torch.manual_seed(0)
 # Parse arguments
 parser = argparse.ArgumentParser()
 parser.add_argument('--tag', type=str)
-parser.add_argument('--test-set', type=str, default='El Rossinyol', choices=['CSD', 'BCBQ'])
+parser.add_argument('--test-set', type=str, default='El Rossinyol', choices=['CSD', 'BCBQ', 'cantoria'])
 parser.add_argument('--f0-from-mix', action='store_true', default=False)
 parser.add_argument('--show-progress', action='store_true', default=False)
 parser.add_argument('--compute', type=str, default='all', choices=['all', 'all_mask', 'all_no_mask', 'sp_SNR','sp_SI-SNR','mel_cep_dist','SI-SDR_mask','sp_SNR_mask','sp_SI-SNR_mask','mel_cep_dist_mask', 'f0_infos'])
@@ -75,6 +75,7 @@ original_cunet = model_args['original_cu_net'] if 'original_cu_net' in model_arg
 # Initialize results and results_masking path
 if args.test_set == 'CSD': test_set_add_on = 'CSD'
 elif args.test_set == 'BCBQ': test_set_add_on = 'BCBQ'
+elif args.test_set == 'cantoria': test_set_add_on = 'Cantoria'
 else: raise ValueError('Unknown test set')
 
 # Initialize add_on element to path to save results
@@ -83,22 +84,23 @@ else: f0_add_on = 'crepe'
 
 # Initialize path to save results
 path_to_save_results = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag, f0_add_on, test_set_add_on, device)
-# path_to_save_results = path_to_save_results + '_2_sources'
+# path_to_save_results = path_to_save_results + '_4_sources'
+# path_to_save_results = path_to_save_results + 'cantoria_test_bis_bis'
 if not os.path.isdir(path_to_save_results):
     os.makedirs(path_to_save_results, exist_ok=True)
 
 if is_u_net: path_to_save_results_masking = path_to_save_results
 else:
     path_to_save_results_masking = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag + '_masking', f0_add_on, test_set_add_on, device)
-    # path_to_save_results_masking = path_to_save_results_masking + '_2_sources'
+    # path_to_save_results_masking = path_to_save_results_masking + '_4_sources'
+    # path_to_save_results_masking = path_to_save_results_masking + 'cantoria_test_bis_bis'
     if not os.path.isdir(path_to_save_results_masking):
         os.makedirs(path_to_save_results_masking, exist_ok=True)
 
 
 #####################################################################################################################################################
 # Passage en 2sources pour tester la généralisation d'un modèle entrainer sur 4 sources
-# model_args['n_sources'] = 2
-
+# model_args['n_sources'] = 4
 
 # Initialize test_set
 if args.test_set == 'CSD':
@@ -144,6 +146,193 @@ elif args.test_set == 'BCBQ':
     
     test_set = torch.utils.data.ConcatDataset([bc_val, bq_val])    
 
+elif args.test_set == 'cantoria':
+    # TODO: Attention, implémentation non finie, il reste à drop les frames silencieuses
+    ejb1 = data.CantoriaDataSets(song_name='EJB1',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+
+    ejb2 = data.CantoriaDataSets(song_name='EJB2',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    cea = data.CantoriaDataSets(song_name='CEA',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    hcb = data.CantoriaDataSets(song_name='HCB',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    lbm1 = data.CantoriaDataSets(song_name='LBM1',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    lbm2 = data.CantoriaDataSets(song_name='LBM2',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    ltj1 = data.CantoriaDataSets(song_name='LJT1',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    ltj2 = data.CantoriaDataSets(song_name='LJT2',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+
+    lng = data.CantoriaDataSets(song_name='LNG',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    rrc = data.CantoriaDataSets(song_name='RRC',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+
+    sss = data.CantoriaDataSets(song_name='SSS',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    thm = data.CantoriaDataSets(song_name='THM',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    vbp = data.CantoriaDataSets(song_name='VBP',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    ysm = data.CantoriaDataSets(song_name='YSM',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    test_set = torch.utils.data.ConcatDataset([ejb1, ejb2, cea])
+    # test_set = torch.utils.data.ConcatDataset([ejb1, ejb2, cea, hcb, lbm1, lbm2, ltj1, ltj2, lng, rrc, sss, thm, vbp, ysm])
+
 else: 
     raise ValueError('Unknown test set')
 
@@ -168,14 +357,15 @@ if compute_results_masking:
 pd.set_option("display.max_rows", None, "display.max_columns", None)
 
 if is_u_net: n_seeds = 1
-else: n_seeds = 5
+else: n_seeds = 1
 
 
 # Load energy snippets
 # index of signals to be removed in evaluation due to too low energy (considered as silence)
 # mandatory to obtain the same results as in the paper
 if model_args['n_sources'] == 4:
-    energy_snippet = pd.read_pickle('./Datasets/ChoralSingingDataset/energy_snippets_4s.pandas')
+    if args.test_set == 'CSD': energy_snippet = pd.read_pickle('./Datasets/ChoralSingingDataset/energy_snippets_4s.pandas')
+    elif args.test_set == 'cantoria': energy_snippet = pd.read_pickle('./Datasets/CantoriaDataset/energy_snippets_4s_bis.pandas')
 elif model_args['n_sources'] == 2:
     energy_snippet = pd.read_pickle('./Datasets/ChoralSingingDataset/energy_snippets_2s.pandas')
     
@@ -205,9 +395,10 @@ for seed in range(n_seeds):
         target_sources = target_sources.unsqueeze(0)
         f0_hz = f0_hz[None, :, :]
 
-        f0_hz_model = torch.zeros_like(f0_hz).to(device) # Pour Cuesta à l'intérieur du modèle
-        # f0_hz_model = f0_hz # Pour Cuesta à l'extérieur du modèle
+        # f0_hz_model = torch.zeros_like(f0_hz).to(device) # Pour Cuesta à l'intérieur du modèle
+        f0_hz_model = f0_hz # Pour Cuesta à l'extérieur du modèle
         
+        # print(f0_hz_model.shape)
         batch_size, n_samples, n_sources = target_sources.shape
 
         n_fft_metrics = 512
@@ -227,10 +418,13 @@ for seed in range(n_seeds):
 
                 source_estimates = torch.tensor(estimated_sources, device=device, dtype=torch.float32).unsqueeze(0)  # [batch_size, n_source, n_samples]
                 source_estimates_masking = source_estimates.reshape((batch_size * n_sources, n_samples))
+                source_export = source_estimates_masking.reshape((batch_size, n_sources, n_samples))
 
             else:
+                # print(name)
+                # print(f0_hz_model)
                 mix_estimate, source_estimates, f0s = trained_model(mix, f0_hz_model)
-
+                
                 # [batch_size * n_sources, n_samples]
                 source_estimates_masking = utils.masking_from_synth_signals_torch(mix, source_estimates, n_fft=2048, n_hop=256)
                 source_export = source_estimates_masking.reshape((batch_size, n_sources, n_samples))
@@ -252,9 +446,15 @@ for seed in range(n_seeds):
                         
                         if not os.path.isdir(path_to_save_results_masking + '/target_sources'): os.makedirs(path_to_save_results_masking + '/target_sources/', exist_ok=True)
                         sf.write(path_to_save_results_masking + '/target_sources' + f'/target_sources_{name}_voice_{voices[j]}.wav', target_sources[j].cpu().numpy(), 16000)
-            
+                        
+                    if not os.path.isdir(path_to_save_results_masking + '/mix'): os.makedirs(path_to_save_results_masking + '/mix/', exist_ok=True)
+                    sf.write(path_to_save_results_masking + '/mix' + f'/mix_{name}.wav', mix[i].cpu().numpy(), 16000)
+                    
+                    if not os.path.isdir(path_to_save_results_masking + '/mix_reconstruct') and not is_u_net: os.makedirs(path_to_save_results_masking + '/mix_reconstruct/', exist_ok=True)
+                    if not is_u_net: sf.write(path_to_save_results_masking + '/mix_reconstruct' + f'/mix_reconstruct_{name}.wav', mix_estimate[i].cpu().numpy(), 16000)
+                    
             # compute metrics for f0s
-            if compute_f0:
+            if compute_f0 and not is_u_net:
 
                 n_eval_frames = int(np.ceil(n_samples / 16000))
                 
@@ -353,7 +553,7 @@ for seed in range(n_seeds):
                 mcd_results_masking = [mcd_masking[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
                 batch_results_masking_dict['mel_cep_dist'] = mcd_results_masking
             
-            if compute_f0:
+            if compute_f0 and not is_u_net:
                 f0_overall_accuracy_results = [overall_accuracies[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
                 batch_results_masking_dict['Overall-Accuracy'] = f0_overall_accuracy_results
                 
@@ -389,7 +589,7 @@ for seed in range(n_seeds):
                 mcd_results = [mcd[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
                 batch_results_dict['mel_cep_dist'] = mcd_results
                 
-            if compute_f0:
+            if compute_f0 and not is_u_net:
                 f0_overall_accuracy_results = [overall_accuracies[b, s, f] for b in range(batch_size) for s in range(n_sources) for f in range(n_eval_frames)]
                 batch_results_dict['Overall-Accuracy'] = f0_overall_accuracy_results
                 
@@ -417,6 +617,7 @@ if compute_results:
     if not is_u_net: 
         # drop results for energy below threshold
         if args.test_set == 'CSD': eval_results = eval_results.drop(energy_to_drop)
+        elif args.test_set == 'cantoria': eval_results = eval_results.drop(energy_to_drop)
         
         # save data frame with all results
         eval_results.to_pickle(path_to_save_results + '/all_results.pandas')
@@ -433,7 +634,7 @@ if compute_results:
         print('sp_SI-SNR', 'mean', means['sp_SI-SNR'], 'median', medians['sp_SI-SNR'], 'std', stds['sp_SI-SNR'])
     if compute_mel_cep_dist:
         print('mel cepstral distance', 'mean', means['mel_cep_dist'], 'median', medians['mel_cep_dist'], 'std', stds['mel_cep_dist'])
-    if compute_f0:
+    if compute_f0 and not is_u_net:
         print('\n'+'Voicing Recall:', 'mean', means['Voicing-Recall'], 'median', medians['Voicing-Recall'], 'std', stds['Voicing-Recall'])
         print('Voicing False Alarm:', 'mean', means['Voicing-False-Alarm'], 'median', medians['Voicing-False-Alarm'], 'std', stds['Voicing-False-Alarm'])
         print('f0 Raw Pitch Accuracy:', 'mean', means['Raw-Pitch-Accuracy'], 'median', medians['Raw-Pitch-Accuracy'], 'std', stds['Raw-Pitch-Accuracy'])
@@ -447,6 +648,7 @@ if compute_results_masking:
     
     # drop results for energy below threshold
     if args.test_set == 'CSD': eval_results_masking = eval_results_masking.drop(energy_to_drop)
+    elif args.test_set == 'cantoria': eval_results_masking = eval_results_masking.drop(energy_to_drop)
     
     # save data frame with all results
     eval_results_masking.to_pickle(path_to_save_results_masking + '/all_results.pandas')
@@ -465,7 +667,7 @@ if compute_results_masking:
         print('sp_SI-SNR', 'mean', means_masking['sp_SI-SNR'], 'median', medians_masking['sp_SI-SNR'], 'std', stds_masking['sp_SI-SNR'])
     if compute_mel_cep_dist_mask:    
         print('mel cepstral distance:', 'mean', means_masking['mel_cep_dist'], 'median', medians_masking['mel_cep_dist'], 'std', stds_masking['mel_cep_dist'])
-    if compute_f0:
+    if compute_f0 and not is_u_net:
         print('\n'+'Voicing Recall:', 'mean', means['Voicing-Recall'], 'median', medians['Voicing-Recall'], 'std', stds['Voicing-Recall'])
         print('Voicing False Alarm:', 'mean', means['Voicing-False-Alarm'], 'median', medians['Voicing-False-Alarm'], 'std', stds['Voicing-False-Alarm'])
         print('f0 Raw Pitch Accuracy:', 'mean', means['Raw-Pitch-Accuracy'], 'median', medians['Raw-Pitch-Accuracy'], 'std', stds['Raw-Pitch-Accuracy'])

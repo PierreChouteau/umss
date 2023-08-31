@@ -329,6 +329,47 @@ def masking_from_synth_signals(true_mix, estimated_sources, n_fft=2048, n_hop=25
     return source_estimates_masking
 
 
+def masking_from_synth_f0(true_mix, f0s, n_fft=2048, n_hop=256):
+    """
+
+    Args:
+        true_mix: torch.Tensor [batch_size, n_samples]
+        f0: [batch_size, n_freq, n_sources]
+
+    Returns: sources_estimates_masking: [batch_size, n_sources, n_samples]
+
+    """
+    true_mix = true_mix.cpu().numpy()[0, :]
+    f0s = f0s.cpu().numpy()[0, :, :]
+    n_sources = f0s.shape[1]
+    n_samples = true_mix.shape[0]
+    
+    # get magnitude and phase specrogram of true mix
+    mix_stft = librosa.stft(true_mix, n_fft, n_hop)
+
+    estimated_sources = np.zeros((n_sources, n_samples))
+    for s in range(n_sources):
+        for t in range(1, n_samples):
+            estimated_sources[s, t] = np.sin(2 * np.pi * f0s[int(t/256), s] * t)
+    
+    source_estimates_mag = []
+    for s in range(n_sources):
+        source_mag = abs(librosa.stft(estimated_sources[s, :], n_fft, n_hop))
+        source_estimates_mag.append(source_mag)
+
+    estimated_mix_mag = sum(source_estimates_mag)
+    
+    source_estimates_masking = []
+    for s in range(n_sources):
+        mask = source_estimates_mag[s] / (estimated_mix_mag + 1e-12)
+        source_stft = mask * mix_stft
+        source_estimate_time_domain = librosa.istft(source_stft, hop_length=n_hop, win_length=n_fft, length=n_samples)
+        source_estimates_masking.append(source_estimate_time_domain)
+
+    return torch.from_numpy(np.asarray(source_estimates_masking, dtype=np.float64)), torch.from_numpy(np.asarray(estimated_sources, dtype=np.float64))
+
+
+
 def masking_unets_softmasks(trained_model, mix, f0_info, n_sources, n_fft=1024, n_hop=256):
     """
     Compute the softmasks after obtaining all source estimates and use their sum as mix estimate.
