@@ -1,5 +1,6 @@
 from faulthandler import disable
 import os
+from pathlib import Path
 import pickle
 import json
 import argparse
@@ -72,6 +73,23 @@ trained_model.return_sources = True
 voices = model_args['voices'] if 'voices' in model_args.keys() else 'satb'
 original_cunet = model_args['original_cu_net'] if 'original_cu_net' in model_args.keys() else False
 
+
+mix_model = False
+if mix_model:
+    # Load d'un warmup monophonique
+    name_model_mono = 'unsupervised_1s_string1song_crepe'
+    model_path_1s = 'trained_models/{}'.format(name_model_mono)
+
+    # load the best model in terms of validation loss
+    target_model_path = next(Path(model_path_1s).glob("%s*.pth" % name_model_mono))
+    state = torch.load(
+        target_model_path,
+        map_location=device
+    )
+    
+    trained_model.load_state_dict(state, strict=False)
+
+
 # Initialize results and results_masking path
 if args.test_set == 'CSD': test_set_add_on = 'CSD'
 elif args.test_set == 'BCBQ': test_set_add_on = 'BCBQ'
@@ -85,6 +103,7 @@ else: f0_add_on = 'crepe'
 # Initialize path to save results
 path_to_save_results = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag, f0_add_on, test_set_add_on, device)
 # path_to_save_results = path_to_save_results + '_4_sources'
+# path_to_save_results = path_to_save_results + '_test'
 if not os.path.isdir(path_to_save_results):
     os.makedirs(path_to_save_results, exist_ok=True)
 
@@ -92,6 +111,7 @@ if is_u_net: path_to_save_results_masking = path_to_save_results
 else:
     path_to_save_results_masking = 'evaluation/{}/eval_results_{}_{}_{}'.format(args.eval_tag + '_masking', f0_add_on, test_set_add_on, device)
     # path_to_save_results_masking = path_to_save_results_masking + '_4_sources'
+    # path_to_save_results_masking = path_to_save_results_masking + '_test'
     if not os.path.isdir(path_to_save_results_masking):
         os.makedirs(path_to_save_results_masking, exist_ok=True)
 
@@ -152,7 +172,7 @@ elif args.test_set == 'cantoria':
     ejb1 = data.CantoriaDataSets(song_name='EJB1',
                                 conf_threshold=0.4, 
                                 example_length=model_args['example_length'], 
-                                allowed_voices='satb',
+                                allowed_voices=voices,
                                 return_name=True, 
                                 n_sources=model_args['n_sources'], 
                                 random_mixes=False, 
@@ -165,7 +185,20 @@ elif args.test_set == 'cantoria':
     ejb2 = data.CantoriaDataSets(song_name='EJB2',
                                 conf_threshold=0.4, 
                                 example_length=model_args['example_length'], 
-                                allowed_voices='satb',
+                                allowed_voices=voices,
+                                return_name=True, 
+                                n_sources=model_args['n_sources'], 
+                                random_mixes=False, 
+                                f0_from_mix=f0_cuesta, 
+                                cunet_original=original_cunet, 
+                                cuesta_model=False, 
+                                cuesta_model_trainable=False,
+                                )
+    
+    cea = data.CantoriaDataSets(song_name='CEA',
+                                conf_threshold=0.4, 
+                                example_length=model_args['example_length'], 
+                                allowed_voices=voices,
                                 return_name=True, 
                                 n_sources=model_args['n_sources'], 
                                 random_mixes=False, 
@@ -175,7 +208,7 @@ elif args.test_set == 'cantoria':
                                 cuesta_model_trainable=False,
                                 )
 
-    test_set = torch.utils.data.ConcatDataset([ejb1, ejb2])
+    test_set = torch.utils.data.ConcatDataset([ejb1, ejb2, cea])
 
 else: 
     raise ValueError('Unknown test set')
@@ -201,14 +234,15 @@ if compute_results_masking:
 pd.set_option("display.max_rows", None, "display.max_columns", None)
 
 if is_u_net: n_seeds = 1
-else: n_seeds = 5
+else: n_seeds = 1
 
 
 # Load energy snippets
 # index of signals to be removed in evaluation due to too low energy (considered as silence)
 # mandatory to obtain the same results as in the paper
 if model_args['n_sources'] == 4:
-    energy_snippet = pd.read_pickle('./Datasets/ChoralSingingDataset/energy_snippets_4s.pandas')
+    if args.test_set == 'CSD': energy_snippet = pd.read_pickle('./Datasets/ChoralSingingDataset/energy_snippets_4s.pandas')
+    elif args.test_set == 'cantoria': energy_snippet = pd.read_pickle('./Datasets/CantoriaDataset/energy_snippets_4s_bis.pandas')
 elif model_args['n_sources'] == 2:
     energy_snippet = pd.read_pickle('./Datasets/ChoralSingingDataset/energy_snippets_2s.pandas')
     
@@ -307,7 +341,11 @@ for seed in range(n_seeds):
                         if not os.path.isdir(path_to_save_results_masking + '/target_sources'): os.makedirs(path_to_save_results_masking + '/target_sources/', exist_ok=True)
                         sf.write(path_to_save_results_masking + '/target_sources' + f'/target_sources_{name}_voice_{voices[j]}.wav', target_sources[j].cpu().numpy(), 16000)
                     
-                
+                    if not os.path.isdir(path_to_save_results_masking + '/mix'): os.makedirs(path_to_save_results_masking + '/mix/', exist_ok=True)
+                    sf.write(path_to_save_results_masking + '/mix' + f'/mix_{name}.wav', mix[i].cpu().numpy(), 16000)
+                    
+                    if not os.path.isdir(path_to_save_results_masking + '/mix_reconstruct'): os.makedirs(path_to_save_results_masking + '/mix_reconstruct/', exist_ok=True)
+                    sf.write(path_to_save_results_masking + '/mix_reconstruct' + f'/mix_reconstruct_{name}.wav', mix_estimate[i].cpu().numpy(), 16000)
             
             
             # compute metrics for f0s
@@ -474,6 +512,7 @@ if compute_results:
     if not is_u_net: 
         # drop results for energy below threshold
         if args.test_set == 'CSD': eval_results = eval_results.drop(energy_to_drop)
+        elif args.test_set == 'cantoria': eval_results = eval_results.drop(energy_to_drop)
         
         # save data frame with all results
         eval_results.to_pickle(path_to_save_results + '/all_results.pandas')
@@ -504,6 +543,7 @@ if compute_results_masking:
     
     # drop results for energy below threshold
     if args.test_set == 'CSD': eval_results_masking = eval_results_masking.drop(energy_to_drop)
+    elif args.test_set == 'cantoria': eval_results_masking = eval_results_masking.drop(energy_to_drop)
     
     # save data frame with all results
     eval_results_masking.to_pickle(path_to_save_results_masking + '/all_results.pandas')

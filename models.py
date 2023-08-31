@@ -694,6 +694,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
                  bidirectional=True,
                  voiced_unvoiced_diff=True,
                  F0Extractor=None,
+                 F0Extractor_trainable=False,
                  F0Assigner=None,
                  cuesta_model_trainable=False,
                  method='sigmoid',
@@ -729,6 +730,7 @@ class SourceFilterMixtureAutoencoder2(_Model):
         self.F0Extractor = F0Extractor
         self.F0Assigner = F0Assigner
         self.cuesta_model_trainable = cuesta_model_trainable
+        self.F0Extractor_trainable = F0Extractor_trainable
         
         # neural networks
         overlap = hop_size / fft_size
@@ -808,10 +810,13 @@ class SourceFilterMixtureAutoencoder2(_Model):
         
             if self.cuesta_model_trainable:
             # saliences extraction or assignment need is trainable
-            
-                with torch.no_grad():
-                    # With Hcqt from Pytorch (nnAudio) - Salience_maps extraction
-                    salience_maps = self.F0Extractor(audio) # .eval() to be sure that the model is in inference mode, we do not update batchnorm        
+
+                if self.F0Extractor_trainable:
+                    salience_maps = self.F0Extractor(audio)
+                    # print('F0Extractor is trainable, salience_maps are extracted with grad()')
+                else:
+                    with torch.no_grad(): salience_maps = self.F0Extractor(audio)
+                    # print('F0Extractor is not trainable, salience_maps are extracted with no_grad()')
                     
                 # From Saliences map to saliences assignment
                 assigned_saliences = self.F0Assigner(salience_maps) # .eval() to be sure that the model is in inference mode, we do not update batchnorm  

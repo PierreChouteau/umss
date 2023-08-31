@@ -36,8 +36,9 @@ def train(args, network, device, train_sampler, optimizer, ss_weights_dict, epoc
     
     # Set full network in train mode or eval mode
     network.train()
-    network.F0Extractor.eval()
-    network.F0Assigner.eval()
+    if args.cuesta_model:
+        network.F0Extractor.eval()
+        network.F0Assigner.eval()
     
     if args.loss_lsf_weight > 0: network.return_lsf = True
     if args.ss_loss_weight > 0: network.return_synth_controls = True
@@ -295,8 +296,9 @@ def valid(args, network, device, valid_sampler, epoch, writer):
     
     # Set full network in eval mode
     network.eval()
-    network.F0Extractor.eval()
-    network.F0Assigner.eval()
+    if args.cuesta_model:
+        network.F0Extractor.eval()
+        network.F0Assigner.eval()
     
     if args.supervised: network.return_sources = True
     
@@ -601,7 +603,9 @@ def main():
     parser.add_argument('--voiced-unvoiced-same-noise', action='store_true', default=False)
     parser.add_argument('--return-sources', action='store_true', default=False)
     parser.add_argument('--cuesta-model-trainable', action='store_true', default=False,
-                        help='if True, cuesta model is trainable')
+                        help='if True, cuesta model (Extracor and Assigner) are trainable')
+    parser.add_argument('--F0Extractor-trainable', action='store_true', default=False,
+                        help='if True, F0Extractor is trainable')
     parser.add_argument('--method', type=str, default='sigmoid',
                         help='method for extract mf0 from assigned salience')
 
@@ -632,7 +636,7 @@ def main():
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     print("Using GPU:", use_cuda)
     #print("Using Torchaudio: ", utils._torchaudio_available())
-    print('Cuesta model:', args.cuesta_model)
+    print('Mf0 Model:', args.cuesta_model)
     dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}
 
     # create output dir if not exist
@@ -692,18 +696,27 @@ def main():
     if args.cuesta_model:
         # Si True, on utilise le modèle Cuesta entrainé
         # Sinon, on utilise le modèle Cuesta non entrainé
-        model_to_train.F0Extractor = models.F0Extractor(trained_cuesta=True) # ATTENTION: Pour l'instant trained_cuesta est un paramètre en dur
-        model_to_train.F0Assigner = models.Assigner(trained_VA=True)
+        model_to_train.F0Extractor = models.F0Extractor(trained_cuesta=True) # ATTENTION: Pour l'instant trained_cuesta est un paramètre hardcode        
+        model_to_train.F0Assigner = models.Assigner(trained_VA=True) # ATTENTION: Pour l'instant trained_VA est un paramètre hardcode
         
         if args.cuesta_model_trainable:
             model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
         else:
             model_to_train.cuesta_model_trainable = args.cuesta_model_trainable
-            
-        print('Cuesta_trainable:', model_to_train.cuesta_model_trainable)
-        print('method:', model_to_train.method)
+        
+        model_to_train.F0Extractor_trainable = args.F0Extractor_trainable
+        
+        print('Mf0 Estimation Trainable:', model_to_train.F0Extractor_trainable)
+        print('Assignement Trainable:', model_to_train.cuesta_model_trainable)
+        print('Method:', model_to_train.method, '\n')
         
     model_to_train.to(device)
+    
+    print(model_to_train.decoder)
+    
+    # print the number of parameters of the model
+    # print(model_to_train)
+    # print('Number of parameters: ', sum(p.numel() for p in model_to_train.parameters() if p.requires_grad)) 
     
     optimizer = torch.optim.Adam(
         [
@@ -762,6 +775,21 @@ def main():
         # we don't set the parameters below to allow resuming training on different data set
         # (model is saved with new name, so there is no risk of overwriting)
         best_epoch = 0
+        
+        mix_model = False
+        if mix_model:
+            # Load d'un warmup monophonique
+            name_model_mono = 'unsupervised_1s_bcbq_crepe_10_epo'
+            model_path_1s = 'trained_models/{}'.format(name_model_mono)
+
+            # load the best model in terms of validation loss
+            target_model_path = next(Path(model_path_1s).glob("%s*.pth" % name_model_mono))
+            state = torch.load(
+                target_model_path,
+                map_location=device
+            )
+    
+            model_to_train.load_state_dict(state, strict=False)
 
     # else start from 0
     else:
